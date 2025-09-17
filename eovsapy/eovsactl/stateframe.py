@@ -84,38 +84,19 @@
 #   2022-Mar-07  DG
 #      Oops--"temporary" change in 2018 (4 years ago!) was never reversed.  
 #      I have taken it out now, since SQL is not working...
-#   2024-Dec-09  DG
-#      Fix bug in PA_sweep() to avoid a crash when the stateframe is not
-#      successfully read.
-#   2025-Apr-23  DG
-#      Changes to reflect removal of equatorially mounted antennas and replacement
-#      with AzEl ones for ants 9-13.  This was just a simple change in 
-#      azel_from_stateframe().
-#   2025-May-17  DG
-#      Import send_cmds() from calibration.py instead of defunct adc_cal2.py
-#      Update code for refer to Ant A/Ant 16 instead of Ant 14.
-#   2025-Jul-12  DG
-#      Discovered and fixed two major bugs!
-#      Fixed hadec2altaz(), which apparently never worked.  This made parallactic angles wrong!
-#      Fixed error in PA_adjust() when chi > 90.  Should have been chi-180, not 180-chi! 2025-07-12
-#   2025-Aug-04  DG
-#      Another tweak to PA_adjust() to add any offset prior to checking PA > 90 or <-90.  Also,
-#      PA_adjust() now responds to an 'Exit' command, which kills the thread but does not send
-#      the position angle to 0 first.
-#
 
 import struct, sys
 import socket
-import urllib2
+import urllib.request, urllib.error, urllib.parse
+from .ctlutil import send_cmds 
 import numpy as np
-from read_xml2 import xml_ptrs
+from eovsapy.read_xml2 import xml_ptrs
 import copy
-from util import Time
-from Tkinter import Tk
-from tkFileDialog import *
+from eovsapy import dbutil as db
+from eovsapy.util import Time, extract, hadec2altaz, par_angle, ant_str2list
 import xml.etree.ElementTree as ET
-import Queue
-q = Queue.Queue()
+import queue
+q = queue.Queue()
 
 #============================
 def control_room_temp():
@@ -123,16 +104,17 @@ def control_room_temp():
        ambient temperature, in C.  If reading data fails, returns an
        impossible number, -99 C.
     '''
+    import subprocess
     try:
-        f = urllib2.urlopen('http://192.168.24.233/state.xml',timeout=0.4)
-        lines = f.readlines()
-        f.close()
+        proc = subprocess.Popen(['wget', '-q', '-O', '-', 'http://192.168.24.233/state.xml'], stdout=subprocess.PIPE)
+        output = proc.stdout.read().decode('utf-8')
+        temp = float(output[13+output.find('<sensor1temp>'):output.find('</sensor1temp>')])
     except:
         # Timeout error
-        print Time.now().iso,'Control room temperature connection timed out'
+        print(Time.now().iso,'Control room temperature connection timed out')
         return -99.0
     try:
-        return int((float(lines[3][13:17]) - 32)*50/9.)/10.
+        return int((temp - 32)*50/9.)/10.
     except:
         return -99.0
         
@@ -142,22 +124,22 @@ def weather(attempt=0):
     take the title and the information and put it in dictionary form'''
 
     try:
-        f = urllib2.urlopen('http://wx.cm.pvt/latestsampledata.xml',timeout=0.4)
+        f = urllib.request.urlopen('http://wx.cm.pvt/latestsampledata.xml',timeout=0.4)
     except:
         # Timeout error
-        print Time.now().iso,'Weather connection timed out'
+        print(Time.now().iso,'Weather connection timed out')
         return {}
     try:
         #tree = ET.parse(f)
-        line = f.readline()
+        line = f.readline().decode('UTF-8')
         if line.find('</oriondata>') == -1:
            # Line is often truncated, so fix it if possible
            line = line[:line.find('</o')]+'</oriondata>'
-           print Time.now().iso,'Fixed Weather info'
+           print(Time.now().iso,'Fixed Weather info')
         #tree = ET.XML(line)
     except:
         # Error reading weather info, so return blank dictionary
-        print Time.now().iso,'Problem reading Weather info'
+        print(Time.now().iso,'Problem reading Weather info')
         return {}
     f.close()
 
@@ -169,7 +151,7 @@ def weather(attempt=0):
             # Try again, then bail if it doesn't work
             return weather(attempt=1)
         # Error reading weather info, so return blank dictionary
-        print Time.now().iso,'Problem parsing Weather info'
+        print(Time.now().iso,'Problem parsing Weather info')
         return {}
     index = 0
 
@@ -197,11 +179,8 @@ def get_median_wind(wthr):
          than average.  I hope this does not take too long!  Returns
          the same dictionary, with median replacing average wind.
     '''
-    import dbutil as db
-    cursor = db.get_cursor()
-    ver = db.find_table_version(cursor,  int(Time.now().lv))
-    
-    query = 'select top 120 Timestamp,Sche_Data_Weat_Wind from fV'+ver+'_vD1 order by Timestamp desc'
+    cnxn, cursor = db.get_cursor()
+    query = 'select top 120 Timestamp,Sche_Data_Weat_Wind from fV66_vD1 order by Timestamp desc'
     data, msg = db.do_query(cursor,query)
     if msg == 'Success':
         try:
@@ -209,7 +188,7 @@ def get_median_wind(wthr):
             wthr.update({'mt2MinRollAvgWindSpeed': medwind})
         except:
             pass
-    cursor.close()
+    cnxn.close()
     return wthr
 
 #============================
@@ -222,16 +201,18 @@ def rd_solpwr(url='http://data.magnumenergy.com/MW5127'):
     '''
     # Read and decode the information from the power station at 12
     try:
-        f = urllib2.urlopen(url,timeout=0.4)
+        f = urllib.request.urlopen(url,timeout=0.4)
     except:
         # Timeout error
-        print Time.now().iso,'Solar Power connection timed out'
+        print(Time.now().iso,'Solar Power connection timed out')
         solpwr = {}
         return solpwr
     try:
         lines = f.readlines()
+        # Convert from bytes to strings for Python3
+        lines = [line.decode('UTF-8') for line in lines]
     except:
-        print Time.now().iso,'Solar Power readlines timed out'
+        print(Time.now().iso,'Solar Power readlines timed out')
         lines = None
     f.close()
     solpwr = {}
@@ -293,35 +274,39 @@ def rd_ACCfile():
     ACCfile = None
     if socket.getfqdn().find('solar.pvt') != -1:
         try:
-            ACCfile = urllib2.urlopen('ftp://'+userpass+'acc.solar.pvt/ni-rt/startup/acc.ini',timeout=0.5)
+            ACCfile = urllib.request.urlopen('ftp://'+userpass+'acc.solar.pvt/ni-rt/startup/acc.ini',timeout=0.5)
         except:
             # Timeout error
-            print Time.now().iso,'FTP connection to ACC timed out'
+            print(Time.now().iso,'FTP connection to ACC timed out')
         # Since this is the HELIOS machine, make a disk copy of ACC.ini in the
         # current (dropbox) directory.  This will be used by other instances of
         # sf_display() on other machines that do not have access to acc.solar.pvt.
         try:
             lines = ACCfile.readlines()
+            # Convert from bytes to strings for Python3
+            lines = [line.decode('UTF-8') for line in lines]
             o = open('acc.ini','w')
             for line in lines:
                 o.write(line+'\n')
             o.close()
             ACCfile.close()
-            ACCfile = urllib2.urlopen('ftp://'+userpass+'acc.solar.pvt/ni-rt/startup/acc.ini',timeout=0.5)
+            ACCfile = urllib.request.urlopen('ftp://'+userpass+'acc.solar.pvt/ni-rt/startup/acc.ini',timeout=0.5)
             # Also read XML file for stateframe from ACC, and decode template for later use
             sf, version = xml_ptrs()
         except:
             pass
     if ACCfile is None:
         # ACC not reachable?  Try reading static files.
-        print 'Cannot ftp ACC.ini.  Reading static acc.ini and stateframe.xml from current directory instead.'
+        print('Cannot ftp ACC.ini.  Reading static acc.ini and stateframe.xml from current directory instead.')
         ACCfile = open('acc.ini','r')
         # Also read XML file for stateframe from static file, and decode template for later use
         sf, version = xml_ptrs('stateframe.xml')
 
-    for line in ACCfile:
+    for line in ACCfile.readline():
+        line = line.decode('UTF-8')
         if s0 in line:    # String s0 ([Stateframe]) found
-            for line in ACCfile:
+            for line in ACCfile.readline():
+                line = line.decode('UTF-8')
                 if s1 in line:
                     binsize = int(line[len(s1):])
                 elif s2 in line:
@@ -330,19 +315,21 @@ def rd_ACCfile():
                 elif line == '':
                     break
         if n0 in line:    # String n0 ([Network]) found
-            for line in ACCfile:
+            for line in ACCfile.readline():
+                line = line.decode('UTF-8')
                 if n1 in line:
                     scdport = int(line[len(n1):])
                 elif n2 in line:
                     sfport = int(line[len(n2):])
-                    print '\nConnecting to ACC at port:',sfport
+                    print('\nConnecting to ACC at port:',sfport)
                 elif n3 in line:
                     scdsfport = int(line[len(n3):])
                     break
                 elif not line:
                     break
         if r0 in line:    # String r0 ([ROACH]) found
-            for line in ACCfile:
+            for line in ACCfile.readline():
+                line = line.decode('UTF-8')
                 if r1 in line:
                     boffile = line[len(r1):].strip()
                 elif not line:
@@ -378,9 +365,9 @@ def rd_stateframe(s,sf_num,n_expected):
         #sys.stdout.write('-')
         #sys.stdout.flush()  # Flush stdout (/tmp/schedule.log) so we can see the output.
     except socket.timeout:
-        print Time.now().iso,'Socket time-out when reading stateframe from ACC'
-    return ''.join(totdata)
-
+        print(Time.now().iso,'Socket time-out when reading stateframe from ACC')
+    return b''.join(totdata)
+    
 #============================
 def get_stateframe(accini):
     '''Connects to the ACC's stateframe port and reads the
@@ -401,7 +388,7 @@ def get_stateframe(accini):
             return None, 'Cannot read from port '+str(accini['sfport'])
         s.close()
     except:
-        return None, 'Cannot open socket to port '+str(accini['sfport'])
+        return None, 'Cannot connect to port '+str(accini['sfport'])
 
 #============================
 def get_stateframefromfile(filename,f=None,recsiz=None):
@@ -422,27 +409,10 @@ def get_stateframefromfile(filename,f=None,recsiz=None):
             return None, 'End of file reached.',None,recsiz
     
 #============================
-def extract(data,k):
-    '''Helper function that extracts a value from data, based on stateframe
-       info pair k (k[0] is fmt string, k[1] is byte offset into data)
-    '''
-    if len(k) == 3:
-       k[2].reverse()
-       val = np.array(struct.unpack_from(k[0],data,k[1]))
-       val.shape = k[2]
-       k[2].reverse()
-    else:
-       val = struct.unpack_from(k[0],data,k[1])[0]
-    return val
-
-#============================
 def azel_from_stateframe(sf, data, antlist=None):
     '''Given a stateframe dictionary and a data record, calculate
        the actual and requested azimuth and elevation for each antenna, as well as the 
        difference between them, and a track flag, all as a dictionary of numpy float arrays.
-
-       Updated to work with 16 antennas (note, this is only called for the current time, so
-       no need for backward compatibililty).
     '''
     daz = []
     delv = []
@@ -455,7 +425,7 @@ def azel_from_stateframe(sf, data, antlist=None):
     dtor = np.pi/180.
     if antlist is None:
         # No antlist, so assume all antennas
-        antlist = range(16)
+        antlist = list(range(15))
 
     for i, ant in enumerate(antlist):
         c = sf['Antenna'][ant]['Controller']
@@ -475,7 +445,7 @@ def azel_from_stateframe(sf, data, antlist=None):
             az_req.append(extract(data,c['AzimuthPosition'])/10000.)
             el_req.append(extract(data,c['ElevationPosition'])/10000.)
 
-        if rm == 1 or ant in [8,9,10,11,12,13,14]:    # New telescopes work differently
+        if rm == 1 or ant == 11:    # New S. Pole telescope works differently
             # Position mode
             daz.append(az1 - az_corr)
             az_act.append(az_req[i] + daz[i])
@@ -488,7 +458,7 @@ def azel_from_stateframe(sf, data, antlist=None):
             delv.append(el1 - el_req[i])
             el_act.append(el1)
 
-        if ant == 15:
+        if ant in [8,9,10,12,13,14]:
             # Case of equatorial mount antennas, convert HA, Dec to El, Az
             eqel, eqaz = hadec2altaz(az_act[i]*dtor,el_act[i]*dtor)
             chi.append(par_angle(eqel, eqaz))
@@ -497,141 +467,84 @@ def azel_from_stateframe(sf, data, antlist=None):
 
     daz = np.array(az_act) - np.array(az_req)
     # Track limit is set at 1/10th of primary beam at 18 GHz
-    tracklim = np.array([0.0555]*15+[0.0043])       # 16-element array
+    tracklim = np.array([0.0555]*13+[0.0043]*2)       # 15-element array
     trackflag = (np.abs(daz) <= tracklim) & (np.abs(np.array(delv)) <= tracklim)
+    trackflag = np.append(trackflag,False)   # Ant 16 is never tracking
 
     return {'dAzimuth':daz,   'ActualAzimuth':np.array(az_act),  'RequestedAzimuth':np.array(az_req),
             'dElevation':np.array(delv),'ActualElevation':np.array(el_act),'RequestedElevation':np.array(el_req),
             'ParallacticAngle':np.array(chi)/dtor, 'TrackFlag':trackflag, 'TrackSrcFlag':tracksrcflag}
 
-#============================
-def par_angle(alt, az):
-    '''Calculate the parallactic angle for a sky location given by
-       altitude alt [radians] and azimuth az [radians].  This is the
-       "nominal" parallactic angle for an X feed exactly aligned with
-       the meridian.  It is defined to be the angle of the feed on the
-       sky relative to the local line of constant hour angle, +ve east
-       of north.
 
-       This is likely reversed in sign for a feed at prime focus.
+def offsets2ants(t,xoff,yoff,ant_str=None):
+    ''' Given a start time (Time object) and a list of offsets output by sp_offsets()
+        for 13 antennas, convert to pointing coefficients (multiply by 10000),
+        add to coefficients listed in stateframe, and send to the relevant 
+        antennas.  The antennas to update are specified with ant_str 
+        (defaults to no antennas, for safety).        
     '''
-    dtor = np.pi/180.
-    lat = 37.233170*dtor
-    chi = np.arctan2(-np.cos(lat)*np.sin(az),
-                  np.sin(lat)*np.cos(alt) - np.cos(lat)*np.sin(alt)*np.cos(az))
-    return chi
 
-#============================
-def hadec2altaz(ha, dec):
-    ''' Given an hour angle and declination, both in radians, return
-        the corresponding altitude and azimuth for OVRO.
-        
-        This gives the same result as radec2azel() in coord_conv.py,
-        but uses HA as input, and the order of the outputs is swapped.
-    '''
-    lat = 37.233170*np.pi/180.
-    salt = np.sin(dec)*np.sin(lat) + np.cos(dec)*np.cos(lat)*np.cos(ha)
-    alt = np.arcsin(salt)
-    
-    az = np.arctan2(-np.cos(dec)*np.sin(ha), np.sin(dec)*np.cos(lat) - np.cos(dec)*np.cos(ha)*np.sin(lat))
+    oldant = [8,9,10,12]
+    if ant_str is None:
+        print('No antenna list specified, so there is nothing to do!')
+        return
 
-    if type(az) is np.ndarray:
-        az[np.where(az < 0)] += 2*np.pi
-    else:
-        if az < 0:
-            az += 2*np.pi
-
-    return alt, az
-
-#============================
-def azel_from_sqldict(sqldict, antlist=None):
-    '''Given a dictionary read from a dimension-15 SQL stateframe query, calculate
-       the actual and requested azimuth and elevation for each antenna, as well as the 
-       difference between them, and a track flag, all as a dictionary of numpy float arrays.
-       
-       Added track source flag, which summarizes intentional offsets
-
-       Updated to work with 16 antennas
-    '''
-    dtor = np.pi/180.
-    if sqldict['Timestamp'][0,0] < Time('2025-05-22').lv:
-        nsolant = 13
-        nant = 15
-        eqant = [8,9,10,12,13]   # Indexes of equatorial antennas
-        idx12 = np.array([11])   # Indexes of "new" antennas (ant 12 only)
-    else:
-        nsolant = 15
-        nant = 16
-        eqant = [15]      # Indexes of equatorial antennas (ant 16 only)
-        idx12 = np.array([8,9,10,11,12,13,14])    # Indexes of "new" antennas (ants 9-15)
+    try:
+        timestamp = int(Time(t,format='mjd').lv)
+    except:
+        print('Error interpreting time as Time() object')
+        return
+    accini = rd_ACCfile()
+    antlist = ant_str2list(ant_str)
     if antlist is None:
-        # No antlist, so assume all antennas
-        antlist = range(nant)
-
-    az1 = copy.deepcopy(sqldict['Ante_Cont_Azimuth1'].astype('float'))/10000.
-    az_corr = copy.deepcopy(sqldict['Ante_Cont_AzimuthPositionCorre'].astype('float'))/10000.
-    el1 = copy.deepcopy(sqldict['Ante_Cont_Elevation1'].astype('float'))/10000.
-    el_corr = copy.deepcopy(sqldict['Ante_Cont_ElevationPositionCor'].astype('float'))/10000.
-    az_req = copy.deepcopy(sqldict['Ante_Cont_AzimuthPosition'].astype('float'))/10000.
-    el_req = copy.deepcopy(sqldict['Ante_Cont_ElevationPosition'].astype('float'))/10000.
-    # Use alternate source of requested positions where RunMode is 4
-    rm = copy.deepcopy(sqldict['Ante_Cont_RunMode'].astype('int'))
-    rms = rm.shape
-    rm.shape = np.prod(rms)
-    good = np.where(rm == 4)[0]
-    if len(good) != 0:
-        az_req_alt = copy.deepcopy(sqldict['Ante_Cont_AzimuthVirtualAxis'].astype('float'))/10000.
-        el_req_alt = copy.deepcopy(sqldict['Ante_Cont_ElevationVirtualAxis'].astype('float'))/10000.
-        az_req.shape = el_req.shape = az_req_alt.shape = el_req_alt.shape = np.prod(rms)
-        az_req[good] = copy.deepcopy(az_req_alt[good])
-        el_req[good] = copy.deepcopy(el_req_alt[good])
-        az_req.shape = el_req.shape = rms
-        
-    daz = copy.deepcopy(az1 - az_req)
-    az_act = copy.deepcopy(az1)
-    delv = copy.deepcopy(el1 - el_req)
-    el_act = copy.deepcopy(el1)
-    # Set "new" antennas to RunMode 1 for this next selection, since
-    # new telescopes work differently
-    rm.shape = rms
-    rm[:,idx12] = 1
-    rm.shape = np.prod(rms)
-    good = np.where(rm == 1)[0]
-    if len(good) != 0:
-        daz.shape = delv.shape = az_act.shape = el_act.shape = az1.shape = np.prod(rms)
-        az_corr.shape = az_req.shape = el1.shape = el_corr.shape = el_req.shape = np.prod(rms)
-        daz[good] = copy.deepcopy(az1[good] - az_corr[good])
-        az_act[good] = copy.deepcopy(az_req[good] + daz[good])
-        delv[good] = copy.deepcopy(el1[good] - el_corr[good])
-        el_act[good] = copy.deepcopy(el_req[good] + delv[good])
-        daz.shape = delv.shape = az_req.shape = el_req.shape = az_act.shape = el_act.shape = rms
-    chi = par_angle(el_act*dtor,az_act*dtor)
-    # Override equatorial antennas
-    for iant in eqant:
-        # Case of equatorial mount antennas, convert HA, Dec to El, Az
-        eqel, eqaz = hadec2altaz(az_act[:,iant]*dtor,el_act[:,iant]*dtor)
-        chi[:,iant] = par_angle(eqel, eqaz)
-
-    daz = az_act - az_req
-    # Track limit is set at 1/10th of primary beam at 18 GHz
-    tracklim = np.array([0.0555]*nsolant+[0.0043]*(nant-nsolant))       # nant-element array
-    trackflag = np.zeros(rms,'bool')
-    for i in range(rms[0]):
-        trackflag[i,:] = (np.abs(daz[i,:]) <= tracklim) & (np.abs(delv[i,:]) <= tracklim)
-
-    if nant==15: trackflag[:,14] = False   # Ant 15 is never tracking
+        return
+    cnxn, cursor = db.get_cursor()
+    # Read current stateframe data (as of 10 s ago)
+    D15data = db.get_dbrecs(cursor,dimension=15,timestamp=timestamp,nrecs=1)
+    cnxn.close()
+    p1_cur, = D15data['Ante_Cont_PointingCoefficient1']
+    p7_cur, = D15data['Ante_Cont_PointingCoefficient7']
     
-    # Check offsets to see if the antennas are intentionally not tracking the source
-    tracksrcflag = np.ones(rms,bool)
-    offsource = (sqldict['Ante_Cont_RAOffset'] + sqldict['Ante_Cont_DecOffset'] + sqldict['Ante_Cont_AzOffset'] +
-                 sqldict['Ante_Cont_ElOffset']).nonzero()
-    tracksrcflag[offsource] = False
-    
-    return {'dAzimuth':daz,   'ActualAzimuth':az_act,  'RequestedAzimuth':az_req,
-            'dElevation':delv,'ActualElevation':el_act,'RequestedElevation':el_req,
-            'ParallacticAngle':chi/dtor, 'TrackFlag':trackflag, 'TrackSrcFlag':tracksrcflag}
+    for i in antlist:
+        if i in oldant:
+            # Change sign of RA offset to be HA, for old antennas (9, 10, 11 or 13)
+            p1_inc = int(-xoff[i]*10000)
+        else:
+            p1_inc = int(xoff[i]*10000)
+        p7_inc = int(yoff[i]*10000)
+        p1_new = p1_cur[i] + p1_inc
+        p7_new = p7_cur[i] + p7_inc
+        print('Updating P1 for Ant',i+1,'P1_old =',p1_cur[i],'P1_inc =',p1_inc,'P1_new =',p1_new)
+        cmd1 = 'pointingcoefficient1 '+str(p1_new)+' ant'+str(i+1)
+        print('Updating P7 for Ant',i+1,'P7_old =',p7_cur[i],'P7_inc =',p7_inc,'P7_new =',p7_new)
+        cmd7 = 'pointingcoefficient7 '+str(p7_new)+' ant'+str(i+1)
+        print('Commands to be sent:')
+        print(cmd1)
+        print(cmd7)
+        send_cmds([cmd1],accini)
+        send_cmds([cmd7],accini)
             
-def PA_adjust(ant=None, crossed=False, offset_angle=0):
+def params2ants(indict_list):
+    ''' After calculating pointing parameters in eovsa_mountcal,
+        send "params_new" values from indict_list (output of multi_mountcal) to antennas
+    
+        indict_list[i]['ant']           gives the antenna to send information to
+        indict_list[i]['params_new']    contains the parameters to send
+        
+    '''
+    from .ctlutil import send_cmds
+    accini = rd_ACCfile()
+    acc = {'host': accini['host'], 'scdport':accini['scdport']}
+    for indict in indict_list:
+        ant = str(indict['ant'])
+        for i in range(9):
+            cmd = 'pointingcoefficient'+str(i+1)+' '+str(indict['params_new'][i])+' ant'+ant
+            send_cmds([cmd],acc)
+        print('Coefficients for ant',ant,'sent.')
+        if int(ant) in [1,2,3,4,5,6,7,8,12,14]:
+            print('Antenna',ant,'controller must be rebooted before parameters take effect.')
+
+def PA_adjust(ant=None, crossed=False):
     ''' Spawned task to check the changing parallactic angle of given
         antenna and rotate the position angle of the focus rotation
         mechanism on Ant14 to counteract it.  Checks for Abort message
@@ -646,12 +559,10 @@ def PA_adjust(ant=None, crossed=False, offset_angle=0):
                        from the nominal parallactic angle. Default is False
     '''
     import time
-    from calibration import send_cmds
     if ant is None:
         q.put_nowait('No antenna specified. Exiting...')
         return
     accini = rd_ACCfile()
-    acc = {'host': accini['host'], 'scdport':accini['scdport']}
     sf = accini['sf']
     sub1 = sf['LODM']['Subarray1']
     chikey = sf['Schedule']['Data']['Chi']
@@ -660,48 +571,42 @@ def PA_adjust(ant=None, crossed=False, offset_angle=0):
     while 1:
         # Read stateframe from ACC
         data, sfmsg = get_stateframe(accini)
-        if sfmsg == 'No Error':
-            if extract(data,sf['Timestamp']) != 0 and extract(data,sub1) >> 15 == 0:
-                # Stateframe has a valid Timestamp, and Antenna A is not in the subarray, so exit
-                break
-            if extract(data,timekey) != 0:
-                # Do this only if stateframe timestamp is valid--otherwise just skip this update
-                # Get Chi for this antenna from the stateframe, converted to degrees
-                chi = extract(data,chikey)[ant]*180/np.pi
-                
-                # If the crossed keyword is set, the orientation angle is 90-degrees from chi
-                if crossed: chi += 90
-                
-                pa_to_send = np.int(-chi+offset_angle)   # Desired rotation angle is -chi
-                # Make sure it is in range...
-                if pa_to_send > 90:
-                    pa_to_send = pa_to_send - 180
-                elif pa_to_send < -90:
-                    pa_to_send = 180 + pa_to_send
-                current_pa = np.int(extract(data,pakey)+0.5+offset_angle)
-                if pa_to_send != current_pa:
-                    # Current PA is different from new one, so rotate feed to new position.
-                    send_cmds(['frm-set-pa '+str(int(pa_to_send))+' ant16'],acc)
-            # Sleep for 1 minute (but checking for Abort message every second), 
-            # and then repeat
-            for i in range(60):
-                try:
-                    msg = q.get_nowait()
-                    if msg == 'Abort':
-                        # Got abort message, so exit.
-                        send_cmds(['frm-set-pa 0 ant16'],acc)
-                        return
-                    elif msg == 'Exit':
-                        return
-                except:
-                    pass
-                time.sleep(1)
-        else:
-            # Error reading the stateframe, so try again 1 s later.
+        if extract(data,sf['Timestamp']) != 0 and extract(data,sub1) >> 13 == 0:
+            # Stateframe has a valid Timestamp, and Antenna 14 is not in the subarray, so exit
+            break
+        if extract(data,timekey) != 0:
+            # Do this only if stateframe timestamp is valid--otherwise just skip this update
+            # Get Chi for this antenna from the stateframe, converted to degrees
+            chi = extract(data,chikey)[ant]*180/np.pi
+            
+            # If the crossed keyword is set, the orientation angle is 90-degrees from chi
+            if crossed: chi += 90
+            
+            # Make sure it is in range...
+            if chi > 90.:
+                chi = 180. - chi
+            elif chi < -90:
+                chi = 180. + chi
+            pa_to_send = -np.int(chi)   # Desired rotation angle is -chi
+            current_pa = np.int(extract(data,pakey)+0.5)
+            if pa_to_send != current_pa:
+                # Current PA is different from new one, so rotate feed to new position.
+                send_cmds(['frm-set-pa '+str(pa_to_send)+' ant14'],accini)
+        # Sleep for 1 minute (but checking for Abort message every second), 
+        # and then repeat
+        for i in range(60):
+            try:
+                msg = q.get_nowait()
+                if msg == 'Abort':
+                    # Got abort message, so exit.
+                    send_cmds(['frm-set-pa 0 ant14'],accini)
+                    return
+            except:
+                pass
             time.sleep(1)
-    # To get here, either Ant A is not in the subarray, or else we got 
+    # To get here, either Ant14 is not in the subarray, or else we got 
     # an Abort message.  In either case, reset the PA to 0 and exit.
-    send_cmds(['frm-set-pa 0 ant16'],acc)
+    send_cmds(['frm-set-pa 0 ant14'],accini)
         
 def PA_sweep(PA=80,rate=3):
     ''' Spawned task to rotate the 27-m focus rotation mechanism to
@@ -721,7 +626,6 @@ def PA_sweep(PA=80,rate=3):
                sweep in 10 minutes)
     '''
     import time
-    from calibration import send_cmds
     if PA > 90:
         # Make sure PA is not too big
         PA = 90
@@ -734,34 +638,33 @@ def PA_sweep(PA=80,rate=3):
     timekey = sf['Schedule']['Data']['Timestamp']
     pakey = sf['FEMA']['FRMServo']['PositionAngle']['Position']
     # Send FRM to initial position, and wait up to two minutes, checking every 5 s, until there
-    send_cmds(['frm-set-pa '+str(pa_to_send)+' ant16'],acc)
+    send_cmds(['frm-set-pa '+str(pa_to_send)+' ant14'],accini)
     current_pa = -999  # Start with impossible value for current_pa
     msg = ''
     for i in range(24):
         data, sfmsg = get_stateframe(accini)
-        if sfmsg == 'No Error':
-            if extract(data,sf['Timestamp']) != 0 and extract(data,sub1) >> 15 == 0:
-                # Stateframe has a valid Timestamp, and Antenna A is not in the subarray, so exit
-                msg = 'Abort'
-                break
-            if extract(data,timekey) != 0:
-                current_pa = np.round(extract(data,pakey)+0.5)
-            #print 'Current and target PAs:', current_pa, pa_to_send,
-            if pa_to_send != current_pa:
-                try:
-                    msg = q.get_nowait()
-                    if msg == 'Abort':
-                        # Got abort message, so exit.
-                        break
-                except:
-                    pass
-                # Current PA is different from new one, so sleep 5 minutes
-                #print 'Not equal, so sleeping 5 s'
-                time.sleep(5)
-            else:
-                # We are on the desired PA, so proceed
-                #print 'Target PA reached...'
-                break
+        if extract(data,sf['Timestamp']) != 0 and extract(data,sub1) >> 13 == 0:
+            # Stateframe has a valid Timestamp, and Antenna 14 is not in the subarray, so exit
+            msg = 'Abort'
+            break
+        if extract(data,timekey) != 0:
+            current_pa = np.round(extract(data,pakey)+0.5)
+        #print 'Current and target PAs:', current_pa, pa_to_send,
+        if pa_to_send != current_pa:
+            try:
+                msg = q.get_nowait()
+                if msg == 'Abort':
+                    # Got abort message, so exit.
+                    break
+            except:
+                pass
+            # Current PA is different from new one, so sleep 5 minutes
+            #print 'Not equal, so sleeping 5 s'
+            time.sleep(5)
+        else:
+            # We are on the desired PA, so proceed
+            #print 'Target PA reached...'
+            break
     # When we get here, either we are on the desired PA, or the 2 min is up, or
     # an Abort message was received.
     while 1:
@@ -770,12 +673,11 @@ def PA_sweep(PA=80,rate=3):
             break
         # Read stateframe from ACC
         data, sfmsg = get_stateframe(accini)
-        if sfmsg == 'No Error':
-            if extract(data,sf['Timestamp']) != 0 and extract(data,sub1) >> 15 == 0:
-                # Stateframe has a valid Timestamp, and Antenna A is not in the subarray, so exit
-                break
-        #print 'Sending command','frm-set-pa '+str(pa_to_send)+' ant16'
-        send_cmds(['frm-set-pa '+str(pa_to_send)+' ant16'],acc)
+        if extract(data,sf['Timestamp']) != 0 and extract(data,sub1) >> 13 == 0:
+            # Stateframe has a valid Timestamp, and Antenna 14 is not in the subarray, so exit
+            break
+        #print 'Sending command','frm-set-pa '+str(pa_to_send)+' ant14'
+        send_cmds(['frm-set-pa '+str(pa_to_send)+' ant14'],accini)
         # Sleep for number of seconds given by rate (but checking for Abort message every second), 
         # and then repeat
         for i in range(rate):
@@ -795,4 +697,4 @@ def PA_sweep(PA=80,rate=3):
     # To get here, either Ant14 is not in the subarray, or we got 
     # an Abort message, or the FRM has reached PA.  In any of these cases, 
     # reset the PA to 0 and exit.
-    send_cmds(['frm-set-pa 0 ant16'],acc)
+    send_cmds(['frm-set-pa 0 ant14'],accini)

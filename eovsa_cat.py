@@ -29,6 +29,12 @@
 #      GEO: https://celestrak.org/NORAD/elements/gp.php?GROUP=geo&FORMAT=tle
 #      GPS: https://celestrak.org/NORAD/elements/gp.php?GROUP=gps-ops&FORMAT=tle
 #      O3B: https://celestrak.org/NORAD/elements/gp.php?GROUP=other-comm&FORMAT=tle
+#  2025-Aug-05  DG
+#    TS Kelso limits the number of times one can access the above pages, so now
+#    I write the data to make a disk copy and if later the access fails it just reads
+#    from the disk copy.
+# 2025-Sep-17 SY
+#    Added timeout to urlopen to avoid hanging if the site is not reachable.
 
 import aipy, ephem, numpy
 from math import cos, sin
@@ -71,13 +77,18 @@ def load_geosats():
     '''
     # Retrieve TLE file for geostationary satellites from Celestrak site.
     try:
-#        f = urllib2.urlopen('https://celestrak.org/NORAD/elements/gp.php?GROUP=geo&FORMAT=tle')
-        f = urllib2.urlopen('https://web.njit.edu/~sjyu/download/eovsa/geo.txt')
+        f = urllib2.urlopen('https://celestrak.org/NORAD/elements/gp.php?GROUP=geo&FORMAT=tle', timeout=10)
+        lines = f.readlines()
+        fout = open('geo.txt','w')
+        for line in lines:
+            fout.write(line)
+        fout.close()
     except urllib2.URLError as err:
         print 'Error reading GEO satellite web file:', err
-        return []
+        print 'Will read from disk copy geo.txt'
+        f = open('geo.txt','r')
+        lines = f.readlines()
         
-    lines = f.readlines()
     f.close()
     nlines = len(lines)
     
@@ -103,12 +114,18 @@ def load_gpssats():
     '''
     # Retrieve TLE file for geostationary satellites from Celestrak site.
     try:
-#        f = urllib2.urlopen('https://celestrak.org/NORAD/elements/gp.php?GROUP=gps-ops&FORMAT=tle')
-        f = urllib2.urlopen('https://web.njit.edu/~sjyu/download/eovsa/GPS.txt')
+        f = urllib2.urlopen('https://celestrak.org/NORAD/elements/gp.php?GROUP=gps-ops&FORMAT=tle', timeout=10)
+        lines = f.readlines()
+        fout = open('gps.txt','w')
+        for line in lines:
+            fout.write(line)
+        fout.close()
     except urllib2.URLError as err:
         print 'Error reading GPS satellite web file:', err
-        return []
-    lines = f.readlines()
+        print 'Will read from disk copy gps.txt'
+        f = open('gps.txt','r')
+        lines = f.readlines()
+
     f.close()
     nlines = len(lines)
     
@@ -132,15 +149,20 @@ def load_o3bsats():
     ''' Read the list of ob3 satellites from the Celestrak site and create a list
         of RadioGeosat objects containing all satellites.  
     '''
-    # Retrieve TLE file for o3b satellites from Celestrak site.
+    # Retrieve TLE file for ob3 satellites from Celestrak site.
     try:
-#        f = urllib2.urlopen('https://celestrak.org/NORAD/elements/gp.php?GROUP=other-comm&FORMAT=tle')
-        f = urllib2.urlopen('https://web.njit.edu/~sjyu/download/eovsa/other_comm.txt')
+        f = urllib2.urlopen('https://celestrak.org/NORAD/elements/gp.php?GROUP=other-comm&FORMAT=tle', timeout=10)
+        lines = f.readlines()
+        fout = open('ob3.txt','w')
+        for line in lines:
+            fout.write(line)
+        fout.close()
     except urllib2.URLError as err:
         print 'Error reading ob3 satellite web file:', err
-        return []
+        print 'Will read from disk copy ob3.txt'
+        f = open('ob3.txt','r')
+        lines = f.readlines()
 
-    lines = f.readlines()
     f.close()
     nlines = len(lines)
     
