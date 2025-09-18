@@ -2129,7 +2129,7 @@ class FormWidget(QtGui.QWidget):
             # moving satellite capability, track_mode for those should be 'SATELL'
             sh_dict['track_mode'] = 'FIXED '
             try:
-                f = urllib2.urlopen('http://www.celestrak.com/NORAD/elements/geo.txt',timeout=20)
+                f = urllib2.urlopen('http://www.celestrak.org/NORAD/elements/geo.txt', timeout=5)
                 lines = f.readlines()
             except:
                 print util.Time.now().iso,'Connection to Celestrak timed out.'

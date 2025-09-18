@@ -82,7 +82,7 @@ def geosat_tracktable(srcname,mjd1=None,mjd2=None):
         mjd2 = mjd1 + 1.
 
     # Retrieve TLE file for geostationary satellites from Celestrak site.
-    f = urllib2.urlopen('http://www.celestrak.com/NORAD/elements/geo.txt')
+    f = urllib2.urlopen('http://www.celestrak.org/NORAD/elements/geo.txt')
     lines = f.readlines()
     f.close()
 
@@ -116,4 +116,3 @@ def geosat_tracktable(srcname,mjd1=None,mjd2=None):
         return tbl
     else:
         return 'Source '+name+' not found'
-

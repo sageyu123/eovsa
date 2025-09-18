@@ -1213,7 +1213,7 @@ class App():
             # moving satellite capability, track_mode for those should be 'SATELL'
             sh_dict['track_mode'] = 'FIXED '
             try:
-                f = urllib2.urlopen('http://www.celestrak.com/NORAD/elements/geo.txt',timeout=2)
+                f = urllib2.urlopen('http://www.celestrak.org/NORAD/elements/geo.txt', timeout=2)
                 lines = f.readlines()
                 for i,line in enumerate(lines):
                      if line.find(sh_dict['source_id']) == 0:

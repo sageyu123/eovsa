@@ -406,7 +406,14 @@
 #       TS Kelso limits the number of times one can access the Celestrak pages, so now
 #       I write the geo.txt data to make a disk copy and if later the access fails it just reads
 #       from the disk copy.
-#
+#    2025-Sep-17 SY
+#   Updated handling of geo.txt, gps.txt, and ob3.txt from celestrak.org:
+#     - Check for a recent local copy (<2 hours old) before downloading.
+#       If found, use it; otherwise, fetch a fresh copy.
+#     - Added timeout to urlopen to avoid hanging if the site is unreachable.
+#     - Added unified helper (get_cached_text) for cached fetch with remote refresh fallback.
+#     - Updated all CelesTrak URLs from .com to .org.
+
 
 import os, signal
 os.chdir('/home/sched/Dropbox/PythonCode/Current')
@@ -486,7 +493,7 @@ if len(sys.argv)<2: # for master schedule write to schedule.log
         # Rename existing log file for debug purposes
         os.rename('/tmp/schedule.log','/tmp/schedule'+datstr+'.log')
     except:
-        print 'Could not rename /tmp/schedule.log to /tmp/schedule'+datstr+'.log.  Perhaps a Helios reboot?'
+        print('Could not rename /tmp/schedule.log to /tmp/schedule'+datstr+'.log.  Perhaps a Helios reboot?')
     sys.stdout = open('/tmp/schedule.log','w')
 else: # use a different log file name for the 2nd subarray (schedule_Subarray2.log or schedule_Starburst.log)
     sys.stdout = open('/tmp/schedule_'+sys.argv[1]+'.log','w')
@@ -525,7 +532,7 @@ def init_scanheader_dict(version=37.0):
 
     aa = eovsa_array()
     aa.date = str(aa.date)[:11]+'00:00'  # Set date to 0 UT
-    #print t.iso,aa.epoch
+    #print(t.iso,aa.epoch)
     mjd0 = aa.date + 15019.5   # Convert from ephem date to mjd
 
     try:
@@ -533,7 +540,7 @@ def init_scanheader_dict(version=37.0):
         mjdacc0 = np.double(f.readline().split()[0])
         f.close()
     except:
-        print t.iso,'ACC connection for acc0 time timed out.  Reading from /tmp/acc0time.txt'
+        print(t.iso,'ACC connection for acc0 time timed out.  Reading from /tmp/acc0time.txt')
         f = open('/tmp/acc0time.txt','r')
         mjdacc0 = np.double(f.readline().split()[0])
         f.close()
@@ -548,7 +555,7 @@ def init_scanheader_dict(version=37.0):
         dcen  = dcenters[:16,0]
         dceny = dcenters[:16,1]
     except:
-        print t.iso,'SQL connection for delay centers failed.'
+        print(t.iso,'SQL connection for delay centers failed.')
         dcen = [0]*16
         dceny = [0]*16
     # ************ End of block *********
@@ -558,7 +565,7 @@ def init_scanheader_dict(version=37.0):
         # dcen  = delaydict['Delaycen_ns'][:,0]
         # dceny = delaydict['Delaycen_ns'][:,1]
     # else:
-        # print t.iso,'ACC transfer of delay centers failed.  Delay center not updated'
+        # print(t.iso,'ACC transfer of delay centers failed.  Delay center not updated')
         # dcen = [0]*16
         # dceny = [0]*16
     
@@ -573,9 +580,9 @@ def init_scanheader_dict(version=37.0):
         # Convert string to numpy array
         antlist = numpy.array(antasgn[:-1].split(',')).astype('int')
     except:
-        print t.iso,'ACC connection for eovsa_corr.ini (ROACH antenna assignments) timed out.'
+        print(t.iso,'ACC connection for eovsa_corr.ini (ROACH antenna assignments) timed out.')
         antlist = numpy.arange(16)   # Assume [bad assumption!] that antennas are assigned in order
-    print t.iso, 'Antlist is:', antlist
+    print(t.iso, 'Antlist is:', antlist)
     
     sh_dict = {'timestamp': timestamp,
                'Version': version,
@@ -673,7 +680,7 @@ def set_uvw(aa,t,srcname):
 
     cat = aa.cat                           # Make a copy of catalog
     cat.compute(aa)                        # Compute for time t+1
-    #print t.iso,aa.epoch
+    #print(t.iso,aa.epoch)
     sf_dict['uvw'] = sf_dict['uvw1'].copy()       # Transfer previously calculated uvw (time t)
     sf_dict['delay'] = sf_dict['delay1'].copy()   # Transfer previously calculated delay (time t)
     sf_dict['timestamp'] = sf_dict['timestamp1']  # Transfer previous timestamp (time t)
@@ -726,8 +733,7 @@ def get_antlist(key='sun',filename='default.antlist'):
     try:
         return antlist_dict[key.lower()]
     except:
-        print 'Warning: get_antlist() could not find an antlist of name', key,
-        'in file', filename + '. In this case get_antlist() returns an empty string.'
+        print('Warning: get_antlist() could not find an antlist of name', key, 'in file', filename + '. In this case get_antlist() returns an empty string.')
         return ''
 
 #============================
@@ -762,7 +768,7 @@ class App():
         if self.subarray_name == 'Subarray1':
             self.sh_datfile = sh_folder+'scan_header.dat'
         else:
-            self.sh_datfile = shfolder+'scan_header_' + self.subarray_name + '.dat'
+            self.sh_datfile = sh_folder+'scan_header_' + self.subarray_name + '.dat'
         if sh_dict == {}:
             init_scanheader_dict()
 #            if self.subarray_name == 'Starburst':
@@ -986,7 +992,7 @@ class App():
         # uvw, delays, etc.
         sys.stdout.flush()
         self.aa = eovsa_cat.eovsa_array_with_cat()
-        #print t.iso,self.aa.epoch,' Initial epoch'
+        #print(t.iso,self.aa.epoch,' Initial epoch')
 
         self.aa.epoch = '2000/1/1 12:00'      # Get coordinates in J2000 epoch
         sys.stdout.flush()
@@ -1061,43 +1067,43 @@ class App():
             rnum = int(roach_ip[5:6])-1
             self.roaches.append(roachModule.Roach(roach_ip, boffile_name))#, cfg))
             if self.roaches[-1].msg == 'Success':
-                print roach_ip,'serving ants',self.roaches[-1].ants,'is reachable'
+                print(roach_ip,'serving ants',self.roaches[-1].ants,'is reachable')
                 if self.roaches[-1].ants is None:
-                    print roach_ip,'ants is None, so retry the connection 10 times.'
+                    print(roach_ip,'ants is None, so retry the connection 10 times.')
                     # Something weird happened, so retry the connection
                     for itry in range(10):
                         self.roaches[-1].fpga.disconnect()
                         self.roaches[-1] = roachModule.Roach(roach_ip)
                         if not self.roaches[-1].ants is None:
-                            print 'Got good connection on try:', itry+1
+                            print('Got good connection on try:', itry+1)
                             break
                     if self.roaches[-1].msg != 'Success':
-                        print 'Reconnect failed.'
+                        print('Reconnect failed.')
                     else:
-                        print roach_ip,'serving ants',self.roaches[-1].ants,'is reachable'
+                        print(roach_ip,'serving ants',self.roaches[-1].ants,'is reachable')
                 self.roaches[-1].dlasweep = None
                 try:
                     self.roaches[-1].brd_clk = self.roaches[-1].fpga.est_brd_clk()
-                    print roach_ip,'clock is',self.roaches[-1].brd_clk
+                    print(roach_ip,'clock is',self.roaches[-1].brd_clk)
                     if self.brd_clk_freq is None:
                         # Board clock has not been set yet, so set it once (from first ROACH)
                         self.brd_clk_freq = int(self.roaches[-1].brd_clk)
                     if abs(self.roaches[-1].brd_clk-self.brd_clk_freq)>1:
-                        print roach_ip,'clock NOT', self.brd_clk_freq, 'MHz.'
+                        print(roach_ip,'clock NOT', self.brd_clk_freq, 'MHz.')
                 except:
-                    print roach_ip,'could NOT read FPGA clock speed. Will mark unreachable'
+                    print(roach_ip,'could NOT read FPGA clock speed. Will mark unreachable')
                     self.roaches[-1].brd_clk = 0.0
                     self.roaches[-1].fpga.stop()
                     self.roaches[-1].fpga = None
                 if self.roaches[-1].ants is None:
-                    print roach_ip,'ants is still None.  Will mark unreachable'
+                    print(roach_ip,'ants is still None.  Will mark unreachable')
                     self.roaches[-1].brd_clk = 0.0
                     self.roaches[-1].fpga.stop()
                     self.roaches[-1].fpga = None
                     self.error = roach_ip+' ants is None, so is marked unreachable!!!'
                 sh_dict['roach_brd_clk'][rnum] = self.roaches[-1].brd_clk
             else:
-                print roach_ip,'is unreachable!',self.roaches[-1].msg
+                print(roach_ip,'is unreachable!',self.roaches[-1].msg)
                 self.roaches.pop()
 
     #============================
@@ -1107,7 +1113,7 @@ class App():
         # which should hopefully do it, but we should also log the fact by setting
         # a flag in the self object.
         self.error = 'The 15-s-alarm went off!'
-        print self.error,'Signal:',signum,'at frame',frame
+        print(self.error,'Signal:',signum,'at frame',frame)
         sys.stdout.flush()
         # Try to reestablish connection to the ROACHes, and set self.fpga accordingly
         # This will keep dla2roach() from hanging.
@@ -1181,13 +1187,13 @@ class App():
         w = event.widget
         command = w.get()
         if w == self.wproj:
-            print 'Project is:',command
+            print('Project is:',command)
         elif w == self.woper:
-            print 'Observer is:',command
+            print('Observer is:',command)
         elif w == self.comm:
-            print 'Comment is:',command
+            print('Comment is:',command)
         else:
-            print 'unknown widget'
+            print('unknown widget')
 
     #============================
     def display_ctl(self,event):
@@ -1275,7 +1281,7 @@ class App():
                         visible = scan_visible(src,self.aa,trange,check_27m,check_2m)
                         if not visible:
                             self.error = 'Warning, source '+name+' not visible at scheduled time: Schedule line '+str(i+1)
-                            print self.error
+                            print(self.error)
                     except:
                         self.error = 'Err: source '+name+' not found in catalog.  Not added to schedule!'
 
@@ -1400,7 +1406,7 @@ class App():
             # Determine how many days from date of first line to today
             line = self.L.get(0)
             days = int(t.mjd) - int(mjd(line))
-            print 'Adding ',days,'days.'
+            print('Adding ',days,'days.')
             for i in range(self.lastline):
                 line = self.L.get(i)
                 linemjd = mjd(line) + days
@@ -1528,13 +1534,13 @@ class App():
                     else:
                         # No source found for wide, so mark line as a failure
                         line = line[:29] + 'No Src!!' + line[37:]
-                        print 'No source after searching the following sources: '
+                        print('No source after searching the following sources: ')
                         for f in fsortwide:
                             idx = fluxwide.index(f)
                             jys = fluxwide[idx]
                             src = srclistwide[idx]
                             visible = scan_visible(src,self.aa,trange)
-                            print src.name, jys, visible, src.ra, src.dec, '     ', src.az, src.alt
+                            print(src.name, jys, visible, src.ra, src.dec, '     ', src.az, src.alt)
                 self.L.delete(i)
                 self.L.insert(i,line)
                 if i == 1:
@@ -1712,14 +1718,14 @@ class App():
             except KeyError:
                 trigger_timer[antnum] = 1000   # start high so that it won't wait 20s before the first trigger
             if trigger_timer[antnum] < trigger_cadence:
-                if test_mode: print 'Skipping ant '+ str(antnum) + ' because <' +str(trigger_cadence)+' sec since last trigger'
+                if test_mode: print('Skipping ant '+ str(antnum) + ' because <' +str(trigger_cadence)+' sec since last trigger')
                 continue
             
             # skip this antenna if all crio monitor data for this ant is zero
             c = sf['Antenna'][antnum-1]['Controller']
             sflist = array([stateframe.extract(data,c[k]) for k in c.keys()])
             if len(find(sflist != 0)) == 0:
-                if test_mode: print 'Skipping ant '+ str(antnum)+' because no stateframe data from controller'
+                if test_mode: print('Skipping ant '+ str(antnum)+' because no stateframe data from controller')
                 continue
             
             trigger = False  # set this to True if too close to Sun
@@ -1729,10 +1735,10 @@ class App():
             runmode = runmode_map[rm]
             
             if test_mode:
-                print '-----------'
-                print 'LST:', lst, '- Sun coords:', sun_coords
-                print 'Antnum:', antnum
-                print 'Runmode:', rm, runmode
+                print('-----------')
+                print('LST:', lst, '- Sun coords:', sun_coords)
+                print('Antnum:', antnum)
+                print('Runmode:', rm, runmode)
             
             # determine whether to trigger moving to safe position
             
@@ -1749,7 +1755,7 @@ class App():
                 try:
                     t = sun_timer[antnum]
                 except KeyError:
-                    if test_mode: print 'KeyError! setting suntimer to 0'
+                    if test_mode: print('KeyError! setting suntimer to 0')
                     sun_timer[antnum] = 0.
                 # if Actual position is too close to Sun, increment timer by one second
                 sun_timer[antnum] = sun_timer[antnum] + 1.
@@ -1757,14 +1763,14 @@ class App():
                 # trigger if Actual position has been close to Sun for more than max_time
                 # (and not within 0.5 degrees of safe_pos)
                 safe_actual_dist = ephem.separation(actual_coords,safe_coords)
-                if test_mode: print 'Dist between stow and actual position:', safe_actual_dist
+                if test_mode: print('Dist between stow and actual position:', safe_actual_dist)
                 if safe_actual_dist > 0.5:
                     trigger = True
 
             if test_mode:
-                print 'Actual coords:', actual_coords, '- Actual dist:', actual_dist
-                print 'Sun timer:', sun_timer[antnum]
-                print 'Trigger based on Sun timer:', trigger
+                print('Actual coords:', actual_coords, '- Actual dist:', actual_dist)
+                print('Sun timer:', sun_timer[antnum])
+                print('Trigger based on Sun timer:', trigger)
                 
             # runmodes POSITION and TRACK: trigger if Requested pos too near Sun
             if runmode in ['track','position']:
@@ -1772,14 +1778,14 @@ class App():
                 dec_requested = sf_dict['RequestedElevation'][antnum-1] * pi/180.
                 requested_coords = (lst-HA_requested,dec_requested)
                 requested_dist = ephem.separation(requested_coords,sun_coords)*180./pi
-                if test_mode: print 'Requested coords:', requested_coords, '- Requested dist:', requested_dist
+                if test_mode: print('Requested coords:', requested_coords, '- Requested dist:', requested_dist)
                 if requested_dist < min_dist:
                     # trigger if Requested position is too close to Sun and not within 0.5 degrees of stow
                     safe_requested_dist = ephem.separation(requested_coords,safe_coords)
-                    if test_mode: print 'Dist between stow and requested position:', safe_requested_dist
+                    if test_mode: print('Dist between stow and requested position:', safe_requested_dist)
                     if safe_requested_dist > 0.5:
                         trigger = True
-            if test_mode: print 'Trigger:', trigger
+            if test_mode: print('Trigger:', trigger)
             
             if trigger:
                 trigger_timer[antnum] = 0. # reset timer so antenna has time to process command and slew off Sun
@@ -1790,9 +1796,9 @@ class App():
                 pos_cmd = 'position ' + safe_str + ' ant' + str(antnum)
                 self.sendctlline(stop_cmd)
                 self.sendctlline(pos_cmd)
-                print 'Antenna ' + str(antnum) + ' actual or requested position too close to Sun, sending to safe position: ' + safe_str
-                print stop_cmd
-                print pos_cmd
+                print('Antenna ' + str(antnum) + ' actual or requested position too close to Sun, sending to safe position: ' + safe_str)
+                print(stop_cmd)
+                print(pos_cmd)
             
         sys.stdout.flush()
                 
@@ -1820,7 +1826,7 @@ class App():
             pass
         else:
             # If elapsed time is not nominal (e.g. 990 or 1010), write it to log file.
-            print t.iso,str(int(self.telapsed*1000))
+            print(t.iso,str(int(self.telapsed*1000)))
             sys.stdout.flush() # Flush stdout (/tmp/schedule.log or /tmp/schedule_[self.subarray_name].log) so we can see this '-'.
 
         # Attempt to read from spawned task pwr_cycle.ant_toggle() queue.  Reads up to 10
@@ -1828,13 +1834,13 @@ class App():
         for i in range(10):
             try:
                 msg = pwr_cycle.q.get_nowait()
-                print t.iso,msg
+                print(t.iso,msg)
             except:
                 break
         # Attempt to read from spawned task pcapture2.capture_1s() queue.
         try:
             msg = pcapture2.q.get_nowait()
-            print t.iso,msg
+            print(t.iso,msg)
         except:
             pass
             
@@ -1843,9 +1849,9 @@ class App():
         if self.subarray_name != 'Subarray1':
             subarray1_pid = self.get_subarray_pid('Subarray1')
             if subarray1_pid == -1:
-                print util.datime().get('str'), \
+                print(util.datime().get('str'), \
                       'Warning: The master schedule (Subarray1) is not running.  This means that antenna diagnostic ' + \
-                      'information will not be updated in the ACC stateframe and no data will be written to the SQL database.'
+                      'information will not be updated in the ACC stateframe and no data will be written to the SQL database.')
                 sys.stdout.flush() # Flush stdout (/tmp/schedule.log or /tmp/schedule_[self.subarray_name].log) once per second so we can see the output.
 
         # Update phase tracking (u,v,w and delays)
@@ -2025,10 +2031,10 @@ class App():
                         pass
                     else:
                         # This exception could be a real error
-                        print e
+                        print(e)
                         self.error = 'Err: Cannot write stateframe to SQL'
                 except: 
-                    print e
+                    print(e)
                     # This exception could be a real error
                     self.error = 'Err: Cannot write stateframe to SQL'
         # ********** End of block **************
@@ -2043,7 +2049,7 @@ class App():
             if msg == 'No Error': 
                 f.write(data)
         except:
-            print Time.now().iso+' Error writing stateframe to log file'
+            print(Time.now().iso+' Error writing stateframe to log file')
 
         # Create schedule part of stateframe from sf_dict
         # Subarray1 writes Weather, SolarPower, Roach whereas Subarray2/Starburst don't
@@ -2070,7 +2076,7 @@ class App():
             time.sleep(0.02)
             s.close()
         except socket.timeout: 
-            print util.datime().get('str'),'Socket time-out when writing sched stateframe to ACC'
+            print(util.datime().get('str'),'Socket time-out when writing sched stateframe to ACC')
             s.close()
         except:
             self.error = 'Err: Cannot write sched stateframe to ACC'
@@ -2101,7 +2107,7 @@ class App():
                     # When self.wait = 0, continue executing commands starting with
                     # line self.nextctlline, which should be line following $WAIT
                     self.wait -= 1
-                    print 'Waiting...',self.wait
+                    print('Waiting...',self.wait)
                     sys.stdout.flush()
                     if self.wait == 0:
                         self.execute_cmds()
@@ -2203,13 +2209,13 @@ class App():
                         else:
                             if r.dlasweep['pol'] == 'X':
                                 r.set_delays([dlax[a1-1]+dla,dlay[a1-1],dlax[a2-1],dlay[a2-1]])
-                                print 'DLASWEEP Ant',a1,'X delay',dla
+                                print('DLASWEEP Ant',a1,'X delay',dla)
                             elif r.dlasweep['pol'] == 'Y':
                                 r.set_delays([dlax[a1-1],dlay[a1-1]+dla,dlax[a2-1],dlay[a2-1]])
-                                print 'DLASWEEP Ant',a1,'Y delay',dla
+                                print('DLASWEEP Ant',a1,'Y delay',dla)
                             else:
                                 r.set_delays([dlax[a1-1]+dla,dlay[a1-1]+dla,dlax[a2-1],dlay[a2-1]])
-                                print 'DLASWEEP Ant',a1,'X and Y delay',dla
+                                print('DLASWEEP Ant',a1,'X and Y delay',dla)
                     elif r.dlasweep['ant'] == a2:
                         # Increment delay by one
                         r.dlasweep['dla'] += 1
@@ -2221,13 +2227,13 @@ class App():
                             r.dlasweep = None
                         if r.dlasweep['pol'] == 'X':
                             r.set_delays([dlax[a1-1],dlay[a1-1],dlax[a2-1]+dla,dlay[a2-1]])
-                            print 'DLASWEEP Ant',a2,'X delay',dla
+                            print('DLASWEEP Ant',a2,'X delay',dla)
                         elif r.dlasweep['pol'] == 'Y':
                             r.set_delays([dlax[a1-1],dlay[a1-1],dlax[a2-1],dlay[a2-1]+dla])
-                            print 'DLASWEEP Ant',a2,'Y delay',dla
+                            print('DLASWEEP Ant',a2,'Y delay',dla)
                         else:
                             r.set_delays([dlax[a1-1],dlay[a1-1],dlax[a2-1]+dla,dlay[a2-1]+dla])
-                            print 'DLASWEEP Ant',a2,'X and Y delay',dla
+                            print('DLASWEEP Ant',a2,'X and Y delay',dla)
                     elif r.dlasweep['ant'] == 0:
                         # If ant is 0, sweep delays for both antennas 
                         #             (used for total power polarization tests)
@@ -2241,13 +2247,13 @@ class App():
                             r.dlasweep = None
                         if r.dlasweep['pol'] == 'X':
                             r.set_delays([dlax[a1-1]+dla,dlay[a1-1],dlax[a2-1]+dla,dlay[a2-1]])
-                            print 'DLASWEEP Ant',a1,'and',a2,'X delay',dla
+                            print('DLASWEEP Ant',a1,'and',a2,'X delay',dla)
                         elif r.dlasweep['pol'] == 'Y':
                             r.set_delays([dlax[a1-1],dlay[a1-1]+dla,dlax[a2-1],dlay[a2-1]+dla])
-                            print 'DLASWEEP Ant',a1,'and',a2,'Y delay',dla
+                            print('DLASWEEP Ant',a1,'and',a2,'Y delay',dla)
                         else:
                             r.set_delays([dlax[a1-1]+dla,dlay[a1-1]+dla,dlax[a2-1]+dla,dlay[a2-1]+dla])
-                            print 'DLASWEEP Ant',a1,'and',a2,'X and Y delay',dla
+                            print('DLASWEEP Ant',a1,'and',a2,'X and Y delay',dla)
                             
                 if r.msg != 'Success':
                     self.error = r.msg+' '+r.roach_ip
@@ -2308,11 +2314,11 @@ class App():
             acc.login('admin','observer')
             acc.cwd('parm')
             # Send DCM table lines to ACC
-            print acc.storlines('STOR dcm.txt',g)
+            print(acc.storlines('STOR dcm.txt',g))
             g.close()
-            print 'Successfully wrote dcm.txt to ACC'
+            print('Successfully wrote dcm.txt to ACC')
         except:
-            print 'Cannot FTP dcm.txt to ACC'
+            print('Cannot FTP dcm.txt to ACC')
     
     #============================
     def execute_cmds(self):
@@ -2385,7 +2391,7 @@ class App():
             sh_dict['project'] = 'STARBURST'
             sh_dict['source_id'] = cmds[1]
             sh_dict['track_mode'] = 'RADEC '
-            print 'Source is',cmds[1]
+            print('Source is',cmds[1])
         elif cmds[0].upper() == 'TRACKSTOW':
             sh_dict['project'] = 'TRACKSTOW'
             sh_dict['source_id'] = 'STOW'
@@ -2402,25 +2408,38 @@ class App():
             # These are geostationary satellites so far.  If/when we add
             # moving satellite capability, track_mode for those should be 'SATELL'
             sh_dict['track_mode'] = 'FIXED '
+            # Check local file age first
+            geofile = 'geo.txt'
             try:
-                f = urllib2.urlopen('http://www.celestrak.com/NORAD/elements/geo.txt',timeout=20)
-                lines = f.readlines()
-                fout = open('geo.txt','w')
-                for line in lines:
-                    fout.write(line)
-                fout.close()
-            except:
-                print util.Time.now().iso,'Connection to Celestrak timed out.'
-                file_mjd = util.Time(os.stat('geo.txt').st_atime,format='lv').mjd + 24107
-                if (util.Time.now().mjd - file_mjd) <= 1:
-                    print 'Reading from last saved geo.txt...'
-                    f = open('geo.txt','r')
+                file_mjd = util.Time(os.stat(geofile).st_mtime, format='lv').mjd + 24107
+                if (util.Time.now().mjd - file_mjd) < 2./24:
+                    print(util.Time.now().iso, 'Using recent local {}...'.format(geofile))
+                    f = open(geofile, 'r')
                     lines = f.readlines()
                     f.close()
                 else:
-                    print 'Disk copy of geo.txt is more than 1 day old...cannot trust tle file'
-                    sh_dict['source_id']='None'
-                    lines = ['']
+                    raise IOError("{} too old".format(geofile))
+            except:
+                print(util.Time.now().iso, 'No fresh local copy, trying to fetch from Celestrak...')
+                try:
+                    f = urllib2.urlopen('http://www.celestrak.org/NORAD/elements/geo.txt', timeout=5)
+                    lines = f.readlines()
+                    fout = open(geofile, 'w')
+                    for line in lines:
+                        fout.write(line)
+                    fout.close()
+                    f.close()
+                except:
+                    print(util.Time.now().iso, 'Connection to Celestrak failed.')
+                    if os.path.exists(geofile):
+                        print('Using stale local {}...'.format(geofile))
+                        f = open(geofile, 'r')
+                        lines = f.readlines()
+                        f.close()
+                    else:
+                        print('No {} available...cannot trust TLE file'.format(geofile))
+                        sh_dict['source_id'] = 'None'
+                        lines = ['']
             for i,line in enumerate(lines):
                  if line.find(sh_dict['source_id']) == 0:
                      break
@@ -2437,7 +2456,7 @@ class App():
                 geosat=aipy.amp.RadioFixedBody(sat.ra,sat.dec,name=sat.name)
                 self.aa.cat.add_srcs([geosat,geosat])
             else:
-                print 'Geosat named ',sh_dict['source_id'],'not found!'
+                print('Geosat named ',sh_dict['source_id'],'not found!')
                 sh_dict['source_id']='None'
         else:
             # Default project is just the first command on line (truncate to 32 chars)
@@ -2449,8 +2468,8 @@ class App():
                 # Default source ID is second string on command line (truncate to 12 chars)
                 sh_dict['source_id'] = cmds[1][:12]
             sh_dict['track_mode'] = 'FIXED '        
-        print Time.now().iso[:22],'Project:',sh_dict['project']
-        print 'Source:',sh_dict['source_id']
+        print(Time.now().iso[:22],'Project:',sh_dict['project'])
+        print('Source:',sh_dict['source_id'])
         lines = f2.readlines()
         for ctlline in lines:
             # Check for hash mark (#) in line other than first character
@@ -2538,7 +2557,7 @@ class App():
         # with '$*' are Starburst commands.
         # Skip comments
         if len(ctlline) == 0:
-            print util.Time.now().iso[:19],'Empty line in .ctl file?'
+            print(util.Time.now().iso[:19],'Empty line in .ctl file?')
             pass
         elif ctlline[0] == '#':
             pass
@@ -2592,14 +2611,14 @@ class App():
                     for line in f.readlines():
                         tbl_echo += line.rstrip()+'\n'
                     if tbl != tbl_echo:
-                        print 'Error: Transfer of track table',fname,'failed!'
-                        print tbl,'not equal\n',tbl_echo
+                        print('Error: Transfer of track table',fname,'failed!')
+                        print(tbl,'not equal\n',tbl_echo)
                 #==== MK_TRAJ ====
                 elif ctlline.split()[0].upper() == '$MK_TRAJ':
                     cmd, fname, src = ctlline.split()
                     msg = make_trajtables(src,self.aa,fname)
                     if msg != 'Success':
-                        print msg
+                        print(msg)
                     else:
                         # Send AzEl trajtable file to acc
                         fname_ext = '/tmp/'+fname+'.azel'
@@ -2662,7 +2681,7 @@ class App():
                         # Write the table to the SQL database
                         cal_header.dla_centable2sql(filename='/tmp/delay_centers.txt')
                     except:
-                        print util.Time.now().iso,'Could not interpret PLUSDELAY arguments.'
+                        print(util.Time.now().iso,'Could not interpret PLUSDELAY arguments.')
                 #==== CAPTURE-1S ====
                 elif ctlline.split()[0].upper() == '$CAPTURE-1S':
                     # Use $CAPTURE-1S <stem> where <stem> is a string to add to the end of the
@@ -2713,7 +2732,7 @@ class App():
                         f.close()
                         time.sleep(0.1)  # Make sure file has time to be closed.
                     except:
-                        print util.Time.now().iso,'SQL connection for delay centers failed.  Existing delay center used.'
+                        print(util.Time.now().iso,'SQL connection for delay centers failed.  Existing delay center used.')
                         dcenters = None
                     try:
                         f = open('/tmp/delay_centers.txt', 'r')
@@ -2721,8 +2740,8 @@ class App():
                         acc.login('admin', 'observer')
                         acc.cwd('parm')
                         # Send DCM table lines to ACC
-                        print acc.storlines('STOR delay_centers.txt', f)
-                        print 'Successfully wrote delay_centers.txt to ACC'
+                        print(acc.storlines('STOR delay_centers.txt', f))
+                        print('Successfully wrote delay_centers.txt to ACC')
                         f.close()
                         if dcenters is None:
                             # Something went wrong with reading the delay centers from SQL, so get them from the file.
@@ -2741,13 +2760,13 @@ class App():
                         sh_dict['dlacen']  = dcenters[:16,0]
                         sh_dict['dlaceny'] = dcenters[:16,1]
                     except:
-                        print util.Time.now().iso,'Writing delay centers to ACC failed.  Delay center not updated.'
+                        print(util.Time.now().iso,'Writing delay centers to ACC failed.  Delay center not updated.')
 
                     # ************* End of block ****************
                     # Replaced by:
                     # delaydict = cal_header.ACCdlatable2dict()
                     # if delaydict == {}:
-                        # print util.Time.now().iso,'ACC transfer of delay centers failed.  Delay center not updated'
+                        # print(util.Time.now().iso,'ACC transfer of delay centers failed.  Delay center not updated')
                     # else:
                         # sh_dict['dlacen']  = delaydict['Delaycen_ns'][:,0]
                         # sh_dict['dlaceny'] = delaydict['Delaycen_ns'][:,1]
@@ -2781,7 +2800,7 @@ class App():
                     sh_dict['timestamp'] = tsec.lv
                     if srcname is not None:
                         set_uvw(self.aa,tsec,srcname)
-                        print 'Current RA, Dec, HA:',sh_dict['ra'],sh_dict['dec'],sh_dict['ha']
+                        print('Current RA, Dec, HA:',sh_dict['ra'],sh_dict['dec'],sh_dict['ha'])
                         sys.stdout.flush()
                     # Read KATADC status registers.  This can take a long time...
                     sys.stdout.write('There are '+str(len(self.roaches))+' active ROACHes\n')
@@ -2828,14 +2847,14 @@ class App():
                         mjdacc0 = np.double(f.readline().split()[0])
                         f.close()
                     except:
-                        print util.Time.now().iso,'ACC connection for acc0 time timed out. Retry.'
+                        print(util.Time.now().iso,'ACC connection for acc0 time timed out. Retry.')
                         try:
                             f = urllib2.urlopen('ftp://'+userpass+'acc.solar.pvt/parm/acc0time.txt',
                                                 timeout=0.1)
                             mjdacc0 = np.double(f.readline().split()[0])
                             f.close()
                         except:
-                            print util.Time.now().iso,'ACC connection for acc0 time timed out twice.  Reading from /tmp/acc0time.txt'
+                            print(util.Time.now().iso,'ACC connection for acc0 time timed out twice.  Reading from /tmp/acc0time.txt')
                             f = open('/tmp/acc0time.txt','r')
                             mjdacc0 = np.double(f.readline().split()[0])
                             f.close()
@@ -2877,7 +2896,7 @@ class App():
                     try:
                         f.write(data)
                     except:
-                        print Time.now().iso+' Error writing scan header to log file'
+                        print(Time.now().iso+' Error writing scan header to log file')
 
                     sknum = 0    # Default to spectral kurtosis mode 0 (no flagging)                    
                     if nodata == 'NODATA':
@@ -2912,7 +2931,7 @@ class App():
                     # range (does nothing if PA adjustment routine is already running)
                     #   Usage: $PA-SWEEP PA rate, where angle is swept from -PA to PA at
                     #                             rate of 1-degree-per-rate [s]
-                    print 'Got '+ctlline.split()[0].upper()+' command.'
+                    print('Got '+ctlline.split()[0].upper()+' command.')
                     if self.PAthread is None or not self.PAthread.is_alive():
                         # Thread is not already running, so it is safe to proceed
                         try:
@@ -2921,23 +2940,23 @@ class App():
                             # Reading arguments failed, so use defaults
                             PA = 80
                             rate = 3
-                        print 'PA and rate are ',PA,rate
+                        print('PA and rate are ',PA,rate)
                         try:
                             # Spawn the stateframe.PA_sweep() routine to update PA once/rate
                             self.PAthread = threading.Thread(target=stateframe.PA_sweep,kwargs={'PA':PA,'rate':rate})
                             self.PAthread.daemon = True
                             self.PAthread.start()
-                            print 'PAthread started.'
+                            print('PAthread started.')
                         except:
                             # Something went wrong
-                            print 'Error spawning PA_sweep task'
+                            print('Error spawning PA_sweep task')
                             pass
                 #==== PA-TRACK ====
                 elif ctlline.split()[0].upper() == '$PA-TRACK':
                     # Track 27-m focus rotation mechanism to correct for parallactic angle 
                     # of given antenna (does nothing if antenna not correctly specified)
                     #   Usage: $PA-TRACK ant4 <CROSSED> | <offset-angle>
-                    print 'Got '+ctlline.split()[0].upper()+' command.'
+                    print('Got '+ctlline.split()[0].upper()+' command.')
                     if self.PAthread is None or not self.PAthread.is_alive():
                         # Thread is not already running, so it is safe to proceed
                         oangle = 0.0
@@ -2951,19 +2970,19 @@ class App():
                                 try:
                                     oangle = float(anglestr)
                                 except:
-                                    print 'PA-TRACK offset angle',anglestr,'not convertable to float.'
-                        print 'Given antenna is '+antstr
+                                    print('PA-TRACK offset angle',anglestr,'not convertable to float.')
+                        print('Given antenna is '+antstr)
                         try:
                             # Spawn the stateframe.PA_adjust() routine to update PA once/minute
                             antn = pcapture2.ant_str2list(antstr)[0]
-                            print 'Antenna index is',antn
+                            print('Antenna index is',antn)
                             self.PAthread = threading.Thread(target=stateframe.PA_adjust,kwargs={'ant':antn,'crossed':crossed,'offset_angle':oangle})
                             self.PAthread.daemon = True
                             self.PAthread.start()
-                            print 'PAthread started.'
+                            print('PAthread started.')
                         except:
                             # Antenna not correctly specified, so do not spawn routine
-                            print 'Antenna specification no good?'
+                            print('Antenna specification no good?')
                             pass
                 #==== PA-STOP ====
                 elif ctlline.split()[0].upper() == '$PA-STOP':
@@ -2985,7 +3004,7 @@ class App():
                     # Example: call as $GRAB_VNA setup, then $GRAB_VNA HATTN 0 5 ant10
                     if ctlline.split()[1].upper() == 'SETUP':
                         subprocess.Popen(['/bin/bash','./traces/scripts/setup_vna.sh','&'])
-                        print 'Calling setup_vna.sh'
+                        print('Calling setup_vna.sh')
                     else:
                         axis, atn1, atn2, ant = ctlline.split()[1:]
                         tstr = util.Time.now().iso[:19].replace('-','').replace(' ','_').replace(':','')
@@ -2999,7 +3018,7 @@ class App():
                         except:
                             pass
                         vnafilename = './traces/'+tstr+'_'+axis[:1]+'_'+atn1+'_'+atn2+'_'+ant+'.cvs'
-                        print 'Calling grabvna.sh',vnafilename
+                        print('Calling grabvna.sh',vnafilename)
                         subprocess.Popen(['/bin/bash','./traces/scripts/grabvna.sh',vnafilename])
                 #==== TRIPS ====
                 elif ctlline.split()[0].upper() == '$TRIPS':
@@ -3018,7 +3037,7 @@ class App():
                 elif ctlline.split()[0].upper() == '$DLASWEEP':
                     try:
                         vals = ctlline.split()
-                        print vals
+                        print(vals)
                         if len(vals) == 4:
                             junk,ant,dla,dlastop = vals
                             pol = None
@@ -3029,7 +3048,7 @@ class App():
                             if int(ant) == a1 or int(ant) == a2 or int(ant) == 0:
                                 r.dlasweep = {'ant':int(ant),'dla':int(dla),'dlastop':int(dlastop),'pol':pol}
                     except:
-                        print 'Could not interpret $DLASWEEP command'
+                        print('Could not interpret $DLASWEEP command')
                 #==== WAIT ====
                 elif ctlline.split()[0].upper() == '$WAIT':
                     # Need to wait for given number of seconds, so set self.waitmode to True,
@@ -3037,12 +3056,12 @@ class App():
                     try:
                         dur = int(ctlline.split()[1])
                     except:
-                        print 'Could not interpret duration on $WAIT command--defaulting to 10 s'
+                        print('Could not interpret duration on $WAIT command--defaulting to 10 s')
                         dur = 10
                     self.waitmode = True
                     #self.nextctlline = i+1
                     self.wait = dur
-                    print 'Initializing wait for',dur,'seconds'
+                    print('Initializing wait for',dur,'seconds')
                     #break
                 #==== PCYCLE ====
                 elif ctlline.split()[0].upper() == '$PCYCLE':
@@ -3050,7 +3069,7 @@ class App():
                     # for a given antenna.
                     device, ants = self.interpret_pcycle(ctlline)
                     if device is None:
-                        print 'Error interpreting $PCYCLE command',ctlline
+                        print('Error interpreting $PCYCLE command',ctlline)
                     else:
                         # Since device is not None, interpreting tokens succeeded.
                         if device == 'ANT':
@@ -3113,7 +3132,7 @@ class App():
                                     lna,fstr,polstr,model,sn,vdrain,vg1,vg2,idrain =lines[i+2+k].split()
                                     lnas_b[int(lna)] = {'vd':float(vdrain),'vg1':float(vg1),'vg2':float(vg2)}
                     except:
-                        print 'Error reading/parsing LNA_settings.txt file from ACC'
+                        print('Error reading/parsing LNA_settings.txt file from ACC')
                         
                     try:
                         for i in range(4):
@@ -3134,13 +3153,13 @@ class App():
                             #cmdstr = 'LNA-GATE2 '+lnas[i]+' '+str(lnas_b[i]['vg2'])+' ANT15'
                             #self.sendctlline(cmdstr)
                     except:
-                        print 'Error sending LNA_settings to ACC'
+                        print('Error sending LNA_settings to ACC')
 
                 #==== SUBARRAY ====
                 elif ctlline.split()[0].upper() == '$SUBARRAY':
                     # run the SUBARRRAY1 command if this is the master schedule,
                     # otherwise run the SUBARRAY2 command
-                    print '$SUBARRAY line is:',ctlline
+                    print('$SUBARRAY line is:',ctlline)
                     if ctlline.find('.antlist') == -1:
                         # there is no .antlist file in this line --> the antlist
                         # should be directly specified in the line, e.g.:
@@ -3170,10 +3189,10 @@ class App():
                         s.send(cmd)
                         time.sleep(0.01)
                         s.close()
-                        print 'ctl cmd \'' + ctlline + '\' sent to ACC as \'' + cmd + '\''
+                        print('ctl cmd \'' + ctlline + '\' sent to ACC as \'' + cmd + '\'')
                         sys.stdout.flush()
                     except:
-                        print 'ctl cmd \'' + cmd + '\' not succesfully sent to ACC'
+                        print('ctl cmd \'' + cmd + '\' not succesfully sent to ACC')
                         sys.stdout.flush()
                         pass
             else:
@@ -3193,14 +3212,14 @@ class App():
                         if line.find(keywd) == 0:
                             dwellseq = line[len(keywd):].split(',')
 #                            if len(dwellseq) != 35:
-#                                print 'FSEQ file',cmds[1],'DWELL line must have 35 entries.'
+#                                print('FSEQ file',cmds[1],'DWELL line must have 35 entries.')
 #                                break
                             # Find nearest-integer number of 0.02 s periods
                             nrpt = (numpy.array(dwellseq).astype('float')/0.02 + 0.5).astype('int')
                         keywd = 'LIST:SEQUENCE'
                         if line.find(keywd) == 0:
                             if nrpt is None:
-                                print 'FSEQ file',cmds[1],'DWELL line must come before SEQUENCE line.'
+                                print('FSEQ file',cmds[1],'DWELL line must come before SEQUENCE line.')
                                 break
                             bands = numpy.array(line[len(keywd):].split(',')).astype('int')
                             # Step through bands in fsequence and repeat them according to
@@ -3210,7 +3229,7 @@ class App():
                                     fsequence += str(band)+','
                             break
                     if fsequence == '':
-                        print 'FSEQ file',cmds[1],'not successfully interpreted.'
+                        print('FSEQ file',cmds[1],'not successfully interpreted.')
                         # Default to allowing all channels in RFI mask
                         sh_dict.update({'chanmask':numpy.array([1]*204800,'byte')})
                     else:
