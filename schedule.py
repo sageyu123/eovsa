@@ -408,7 +408,7 @@
 #       from the disk copy.
 #    2025-Sep-17 SY
 #   Updated handling of geo.txt, gps.txt, and ob3.txt from celestrak.org:
-#     - Check for a recent local copy (<2 hours old) before downloading.
+#     - Check for a recent local copy (24 hours old) before downloading.
 #       If found, use it; otherwise, fetch a fresh copy.
 #     - Added timeout to urlopen to avoid hanging if the site is unreachable.
 #     - Added unified helper (get_cached_text) for cached fetch with remote refresh fallback.
@@ -2412,7 +2412,7 @@ class App():
             geofile = 'geo.txt'
             try:
                 file_mjd = util.Time(os.stat(geofile).st_mtime, format='lv').mjd + 24107
-                if (util.Time.now().mjd - file_mjd) < 2./24:
+                if (util.Time.now().mjd - file_mjd) < 1.:
                     print(util.Time.now().iso, 'Using recent local {}...'.format(geofile))
                     f = open(geofile, 'r')
                     lines = f.readlines()

@@ -1,4 +1,4 @@
-#
+# -*- coding: utf-8 -*-
 # History:
 #  2014-Dec-07  DG
 #    The schedule was dying today due to one of the GEOSAT satellites
@@ -35,7 +35,7 @@
 #    from the disk copy.
 # 2025-Sep-17 SY
 #   Updated handling of geo.txt, gps.txt, and ob3.txt from celestrak.org:
-#     - Check for a recent local copy (<2 hours old) before downloading.
+#     - Check for a recent local copy (<24 hours old) before downloading.
 #       If found, use it; otherwise, fetch a fresh copy.
 #     - Added timeout to urlopen to avoid hanging if the site is unreachable.
 #     - Added unified helper (get_cached_text) for cached fetch with remote refresh fallback.
@@ -47,8 +47,8 @@
 #       Using the old .com domain causes 301 redirects, which automated scripts
 #       may mishandle, leading to repeated requests and possible blocking.
 #     - Excess HTTP errors (301, 403, 404) can trigger IP blocking:
-#         * >100 errors in 2 hours → temporary block
-#         * >1,000 errors in a day → firewall block requiring manual review
+#         * >100 errors in 2 hours -> temporary block
+#         * >1,000 errors in a day -> firewall block requiring manual review
 #
 #   Note: The original code used .com URLs with no timeout. If Helios’ IP was
 #   blocked by CelesTrak, loading stateframe.py could take several minutes.
@@ -92,7 +92,7 @@ class RadioGeosat(aipy.phs.RadioBody, object):
         self.Body.compute(observer)
         aipy.phs.RadioBody.compute(self, observer)
 
-def get_cached_text(url, cache_path, max_age_hours=2.0, timeout=10, err_msg=None):
+def get_cached_text(url, cache_path, max_age_hours=24.0, timeout=10, err_msg=None):
     """
     Return file lines from a local cache if fresh, else download and refresh cache.
     Uses mtime for freshness. Returns a list of lines (with \n).
@@ -121,9 +121,13 @@ def get_cached_text(url, cache_path, max_age_hours=2.0, timeout=10, err_msg=None
             fout.write(data)
         os.rename(tmp, cache_path)
         return data.splitlines(True)  # keep line breaks
+
+    except urllib2.HTTPError as e:
+        print('%s: HTTP error %d %s' % (err_msg or 'Download failed', e.code, e.reason))
+    except urllib2.URLError as e:
+        print('%s: URL error %s' % (err_msg or 'Download failed', e.reason))
     except Exception as e:
-        if err_msg:
-            print('%s: %s' % (err_msg, e))
+        print('%s: Other error %s' % (err_msg or 'Download failed', e))
 
     # 3) Download failed: fall back to whatever cache exists (even if stale)
     if os.path.exists(cache_path):
@@ -157,7 +161,7 @@ def load_geosats():
     lines = get_cached_text(
         url='https://celestrak.org/NORAD/elements/gp.php?GROUP=geo&FORMAT=tle',
         cache_path='geo.txt',
-        max_age_hours=2.0,
+        max_age_hours=24.0,
         timeout=10,
         err_msg='Error reading GEO satellite web file. Will read from disk copy geo.txt'
     )
@@ -203,7 +207,7 @@ def load_gpssats():
     lines = get_cached_text(
         url='https://celestrak.org/NORAD/elements/gp.php?GROUP=gps-ops&FORMAT=tle',
         cache_path='gps.txt',
-        max_age_hours=2.0,
+        max_age_hours=24.0,
         timeout=10,
         err_msg='Error reading GPS satellite web file. Will read from disk copy gps.txt'
     )
@@ -247,7 +251,7 @@ def load_o3bsats():
     lines = get_cached_text(
         url='https://celestrak.org/NORAD/elements/gp.php?GROUP=other-comm&FORMAT=tle',
         cache_path='ob3.txt',
-        max_age_hours=2.0,
+        max_age_hours=24.0,
         timeout=10,
         err_msg='Error reading ob3 satellite web file. Will read from disk copy ob3.txt'
     )
