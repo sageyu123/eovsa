@@ -55,7 +55,7 @@ if __name__ == "__main__":
         user_paths = os.environ['PYTHONPATH'].split(os.pathsep)
     except:
         user_paths = []
-    print user_paths
+    print(user_paths)
 
 
 import read_idb as ri
@@ -132,17 +132,17 @@ def get_goes_data(t=None,sat_num=None):
             merit = len(good)
             date_elements = gfits[0].header['DATE-OBS'].split('/')
             if merit > pmerit:
-                print 'File:',file,'is best'
+                print('File:',file,'is best')
                 pmerit = merit
                 goes_data = data
                 goes_t = Time(date_elements[2]+'-'+date_elements[1]+'-'+date_elements[0]).plot_date + tsecs/86400.
         try:
             return goes_t, goes_data
         except:
-            print 'No good GOES data for',datstr
+            print('No good GOES data for',datstr)
             return None, None
     except:
-        print 'GOES site unreachable?'
+        print('GOES site unreachable?')
         return None, None
         
 def allday_udb(t=None, doplot=True, goes_plot=True, savfig=False, savfits=False, gain_corr=True):
@@ -170,12 +170,12 @@ def allday_udb(t=None, doplot=True, goes_plot=True, savfig=False, savfits=False,
     try:
         files = files[i:]
     except:
-        print 'No files found in /data1/eovsa/fits/UDB/ for',date
+        print('No files found in /data1/eovsa/fits/UDB/ for',date)
         return {}
     #import pdb; pdb.set_trace()
     out = ri.read_idb(files,src='Sun')
     if out.keys() == []:
-        print 'Read error, or no Sun data in',files
+        print('Read error, or no Sun data in',files)
         return {}
     if gain_corr:
         import gaincal2 as gc
@@ -186,8 +186,8 @@ def allday_udb(t=None, doplot=True, goes_plot=True, savfig=False, savfits=False,
     #bl2use = np.array([0,2,3,4,6,7,8,9,10])
     pdata = np.nansum(np.nansum(np.abs(out['x'][bl2use,:]),1),0)  # Spectrogram to plot
     if savfits:
-        print "***************** PDATA OUTPUT *********"
-        print pdata.shape
+        print("***************** PDATA OUTPUT *********")
+        print(pdata.shape)
         xspfits.daily_xsp_writefits(out, pdata)
     if doplot:
         import matplotlib.pylab as plt
@@ -279,7 +279,7 @@ def allday_udb(t=None, doplot=True, goes_plot=True, savfig=False, savfits=False,
 
         projdict = get_projects(t, nosql=True)   # Hopefully temporary call that is independent of SQL server
         if projdict == {}:
-            print 'No annotation can be added to plot for',t.iso[:10]
+            print('No annotation can be added to plot for',t.iso[:10])
         else:
             defcolor = '#ff7f0e'
             nscans = len(projdict['Timestamp'])
@@ -338,7 +338,7 @@ def cal_qual(t=None, savfig=True):
     xml, buf = ch.read_cal(caltype,t=t)
     tp_mjd = Time(extract(buf,xml['SQL_timestamp']),format='lv').mjd
     if mjd - tp_mjd > 0.5:
-        print 'CAL_QUAL: Warning, TP Calibration not (yet) available for this date.'
+        print('CAL_QUAL: Warning, TP Calibration not (yet) available for this date.')
     # Find GCAL scan for this date
     fdb = dt.rd_fdb(Time(mjd,format='mjd'))
     gcidx, = np.where(fdb['PROJECTID'] == 'GAINCALTEST')
@@ -347,7 +347,7 @@ def cal_qual(t=None, savfig=True):
         # List of GCAL files
         gcalfile = [datadir+i for i in fdb['FILE'][gcidx]]
     else:
-        print 'CAL_QUAL: Warning, no GAINCALTEST scan for this date.  Will try using the GAINCALTEST from previous day.'
+        print('CAL_QUAL: Warning, no GAINCALTEST scan for this date.  Will try using the GAINCALTEST from previous day.')
         fdb = dt.rd_fdb(Time(mjd-1,format='mjd'))
         gcidx, = np.where(fdb['PROJECTID'] == 'GAINCALTEST')
         if len(gcidx) == 1:
@@ -359,7 +359,7 @@ def cal_qual(t=None, savfig=True):
             # List of GCAL files
             gcalfile = [datadir+i for i in fdb['FILE'][gcidx]]
         else:
-            print 'CAL_QUAL: Error, no GAINCALTEST scan for previous day.'
+            print('CAL_QUAL: Error, no GAINCALTEST scan for previous day.')
             return
     # Find SOLPNTCAL scan for this date
     fdb = dt.rd_fdb(Time(mjd,format='mjd'))
@@ -373,7 +373,7 @@ def cal_qual(t=None, savfig=True):
         # List of SOLPNTCAL files
         solpntfile = [datadir+i for i in fdb['FILE'][gcidx]]
     else:
-        print 'CAL_QUAL: Error, no SOLPNTCAL scan(s) for this date.'
+        print('CAL_QUAL: Error, no SOLPNTCAL scan(s) for this date.')
         return
     files = gcalfile+solpntfile
     outnames = []
@@ -416,8 +416,8 @@ def cal_qual(t=None, savfig=True):
             plt.savefig('/common/webplots/flaremon/daily/'+date[:4]+'/QUAL_'+date+'TP.png')
         except:
             plt.savefig('/tmp/'+date[:4]+'/QUAL_'+date+'TP.png')
-            print 'The .png file could not be created in the /common/webplots/flaremon/daily/ folder.'
-            print 'A copy was created in /tmp/.'
+            print('The .png file could not be created in the /common/webplots/flaremon/daily/ folder.')
+            print('A copy was created in /tmp/.')
 
     f, ax = plt.subplots(4,nant/2)
     f.set_size_inches(nant+2,7,forward=True)
@@ -443,8 +443,8 @@ def cal_qual(t=None, savfig=True):
             plt.savefig('/common/webplots/flaremon/daily/'+date[:4]+'/QUAL_'+date+'XP.png')
         except:
             plt.savefig('/tmp/'+date[:4]+'/QUAL_'+date+'XP.png')
-            print 'The .png file could not be created in the /common/webplots/flaremon/daily/ folder.'
-            print 'A copy was created in /tmp/.'
+            print('The .png file could not be created in the /common/webplots/flaremon/daily/ folder.')
+            print('A copy was created in /tmp/.')
     
 
 if __name__ == "__main__":
@@ -471,7 +471,7 @@ if __name__ == "__main__":
     if len(sys.argv) >= 2:
         try:
             t = Time(sys.argv[1])
-            print t.iso
+            print(t.iso)
             if len(sys.argv) == 3:
                 argin = sys.argv[2].upper()
         except:
@@ -486,13 +486,13 @@ if __name__ == "__main__":
         # Asking for FITS means also do all other features.
         savfits = True
     elif argin != '':
-        print 'Cannot interpret',argin,'as valid time, or string FITS or FITS-ONLY.'
+        print('Cannot interpret',argin,'as valid time, or string FITS or FITS-ONLY.')
         exit()
     if t is None:
         t = Time.now()   # Get today's date
         t2 = Time(t.mjd-2,format='mjd')   # Set t2 to day-before-yesterday
         t = Time(t.mjd-1,format='mjd')    # Set t to yesterday
-    print t.iso[:19],': ',
+    print(t.iso[:19],': ',)
     blah = allday_udb(t=t, doplot=doplot, goes_plot=goes_plot, savfig=savfig, savfits=savfits, gain_corr=gain_corr)   # Process time t
     if goes_plot and not t2 is None:
         # Do this second date only if goes_plot is True

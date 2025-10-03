@@ -77,7 +77,10 @@
 #      I added a check for that in get_projects_nosql().
 #   2023-Aug-16  DG
 #      Fixed problem with plots not showing up past new-day boundary
-#
+#      Note by SY: the problem still exists after the fix.
+#    2025-Oct-03  SY
+#      Add utc2pst to fix the problem of not showing plots past new-day boundary.
+
 import numpy as np
 from util import Time, get_idbdir
 
@@ -253,10 +256,12 @@ def xdata_display(t,ax=None):
     #import get_X_data2 as gd
     import read_idb as ri
     import spectrogram_fit as sp
+    import astropy.units as u
 
-    fdb = dump_tsys.rd_fdb(t)
+    utc2pst = -8 * u.hour # The difference between UTC and pst time. The diff between pst and pdt does not matter here.
+    fdb = dump_tsys.rd_fdb(t+utc2pst)
     # Get files from next day, in case scan extends past current day
-    t1 = Time(t.mjd + 1,format='mjd')
+    t1 = Time(t.mjd + 1,format='mjd')+utc2pst
     fdb1 = dump_tsys.rd_fdb(t1)
     # Concatenate the two days (if the second day exists)
     if fdb1 != {}:

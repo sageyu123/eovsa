@@ -26,16 +26,16 @@ def get_projects(t, nosql=False):
     # Get the project IDs for scans during the period
     verstrh = dbutil.find_table_version(cursor,trange[0].lv,True)
     if verstrh is None:
-        print 'No scan_header table found for given time.'
+        print('No scan_header table found for given time.')
         return {}
     query = 'select Timestamp,Project from hV'+verstrh+'_vD1 where Timestamp between '+tstart+' and '+tend+' order by Timestamp'
     projdict, msg = dbutil.do_query(cursor, query)
     if msg != 'Success':
-        print msg
+        print(msg)
         return {}
     elif len(projdict) == 0:
         # No Project ID found, so return data and empty projdict dictionary
-        print 'SQL Query was valid, but no Project data were found.'
+        print('SQL Query was valid, but no Project data were found.')
         return {}
     projdict['Timestamp'] = projdict['Timestamp'].astype('float')  # Convert timestamps from string to float
     for i in range(len(projdict['Project'])): projdict['Project'][i] = projdict['Project'][i].replace('\x00','')
@@ -59,7 +59,7 @@ def get_projects_nosql(t):
     fdb2 = dt.rd_fdb(t2)
     if fdb == {}:
         # No FDB file found, so return empty project dictionary
-        print 'No Project data [FDB file] found for the given date.'
+        print('No Project data [FDB file] found for the given date.')
         return {}
     if fdb2 == {}:
         pass
@@ -316,9 +316,9 @@ if __name__ == "__main__":
         try:
             t = Time(sys.argv[1])
         except:
-            print 'Cannot interpret',sys.argv[1],'as a valid date/time string.'
+            print('Cannot interpret',sys.argv[1],'as a valid date/time string.')
             exit()
-    print t.iso[:19],': ',
+    print(t.iso[:19],': ',)
 
     if t.mjd % 1 < 0.5:
         t = Time(t.mjd - 0.5, format='mjd')
@@ -340,7 +340,7 @@ if __name__ == "__main__":
     ax.set_title('EOVSA Flare Monitor for '+t.iso[:10])
     ax.set_xlim(int(ut[0])+13/24.,int(ut[0])+26/24.)  # Time plot ranges from 13 UT to 02 UT
     if projdict == {}:
-        print 'No annotation can be added to plot for',t.iso[:10]
+        print('No annotation can be added to plot for',t.iso[:10])
     else:
         nscans = len(projdict['Project'])
         SOS = Time(projdict['Timestamp'],format='lv').plot_date
@@ -375,7 +375,7 @@ if __name__ == "__main__":
     datstr = t.iso[:10].replace('-','')
     plt.savefig('/common/webplots/flaremon/FLM'+datstr+'.png',bbox_inches='tight')
     plt.close(f)
-    print 'Plot written to /common/webplots/flaremon/FLM'+datstr+'.png'
+    print('Plot written to /common/webplots/flaremon/FLM'+datstr+'.png')
     # Copy the most recent two files to fixed names so that the web page can find them.
     flist = np.sort(glob.glob('/common/webplots/flaremon/XSP20*'))
     shutil.copy(flist[-1],'/common/webplots/flaremon/XSP_latest.png')

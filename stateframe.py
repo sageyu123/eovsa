@@ -129,7 +129,7 @@ def control_room_temp():
         f.close()
     except:
         # Timeout error
-        print Time.now().iso,'Control room temperature connection timed out'
+        print(Time.now().iso,'Control room temperature connection timed out')
         return -99.0
     try:
         return int((float(lines[3][13:17]) - 32)*50/9.)/10.
@@ -145,7 +145,7 @@ def weather(attempt=0):
         f = urllib2.urlopen('http://wx.cm.pvt/latestsampledata.xml',timeout=0.4)
     except:
         # Timeout error
-        print Time.now().iso,'Weather connection timed out'
+        print(Time.now().iso,'Weather connection timed out')
         return {}
     try:
         #tree = ET.parse(f)
@@ -153,11 +153,11 @@ def weather(attempt=0):
         if line.find('</oriondata>') == -1:
            # Line is often truncated, so fix it if possible
            line = line[:line.find('</o')]+'</oriondata>'
-           print Time.now().iso,'Fixed Weather info'
+           print(Time.now().iso,'Fixed Weather info')
         #tree = ET.XML(line)
     except:
         # Error reading weather info, so return blank dictionary
-        print Time.now().iso,'Problem reading Weather info'
+        print(Time.now().iso,'Problem reading Weather info')
         return {}
     f.close()
 
@@ -169,7 +169,7 @@ def weather(attempt=0):
             # Try again, then bail if it doesn't work
             return weather(attempt=1)
         # Error reading weather info, so return blank dictionary
-        print Time.now().iso,'Problem parsing Weather info'
+        print(Time.now().iso,'Problem parsing Weather info')
         return {}
     index = 0
 
@@ -225,13 +225,13 @@ def rd_solpwr(url='http://data.magnumenergy.com/MW5127'):
         f = urllib2.urlopen(url,timeout=0.4)
     except:
         # Timeout error
-        print Time.now().iso,'Solar Power connection timed out'
+        print(Time.now().iso,'Solar Power connection timed out')
         solpwr = {}
         return solpwr
     try:
         lines = f.readlines()
     except:
-        print Time.now().iso,'Solar Power readlines timed out'
+        print(Time.now().iso,'Solar Power readlines timed out')
         lines = None
     f.close()
     solpwr = {}
@@ -296,7 +296,7 @@ def rd_ACCfile():
             ACCfile = urllib2.urlopen('ftp://'+userpass+'acc.solar.pvt/ni-rt/startup/acc.ini',timeout=0.5)
         except:
             # Timeout error
-            print Time.now().iso,'FTP connection to ACC timed out'
+            print(Time.now().iso,'FTP connection to ACC timed out')
         # Since this is the HELIOS machine, make a disk copy of ACC.ini in the
         # current (dropbox) directory.  This will be used by other instances of
         # sf_display() on other machines that do not have access to acc.solar.pvt.
@@ -314,7 +314,7 @@ def rd_ACCfile():
             pass
     if ACCfile is None:
         # ACC not reachable?  Try reading static files.
-        print 'Cannot ftp ACC.ini.  Reading static acc.ini and stateframe.xml from current directory instead.'
+        print('Cannot ftp ACC.ini.  Reading static acc.ini and stateframe.xml from current directory instead.')
         ACCfile = open('acc.ini','r')
         # Also read XML file for stateframe from static file, and decode template for later use
         sf, version = xml_ptrs('stateframe.xml')
@@ -335,7 +335,7 @@ def rd_ACCfile():
                     scdport = int(line[len(n1):])
                 elif n2 in line:
                     sfport = int(line[len(n2):])
-                    print '\nConnecting to ACC at port:',sfport
+                    print('\nConnecting to ACC at port:',sfport)
                 elif n3 in line:
                     scdsfport = int(line[len(n3):])
                     break
@@ -378,7 +378,7 @@ def rd_stateframe(s,sf_num,n_expected):
         #sys.stdout.write('-')
         #sys.stdout.flush()  # Flush stdout (/tmp/schedule.log) so we can see the output.
     except socket.timeout:
-        print Time.now().iso,'Socket time-out when reading stateframe from ACC'
+        print(Time.now().iso,'Socket time-out when reading stateframe from ACC')
     return ''.join(totdata)
 
 #============================
@@ -746,7 +746,7 @@ def PA_sweep(PA=80,rate=3):
                 break
             if extract(data,timekey) != 0:
                 current_pa = np.round(extract(data,pakey)+0.5)
-            #print 'Current and target PAs:', current_pa, pa_to_send,
+            #print('Current and target PAs:', current_pa, pa_to_send,)
             if pa_to_send != current_pa:
                 try:
                     msg = q.get_nowait()
@@ -756,11 +756,11 @@ def PA_sweep(PA=80,rate=3):
                 except:
                     pass
                 # Current PA is different from new one, so sleep 5 minutes
-                #print 'Not equal, so sleeping 5 s'
+                #print('Not equal, so sleeping 5 s')
                 time.sleep(5)
             else:
                 # We are on the desired PA, so proceed
-                #print 'Target PA reached...'
+                #print('Target PA reached...')
                 break
     # When we get here, either we are on the desired PA, or the 2 min is up, or
     # an Abort message was received.
@@ -774,7 +774,7 @@ def PA_sweep(PA=80,rate=3):
             if extract(data,sf['Timestamp']) != 0 and extract(data,sub1) >> 15 == 0:
                 # Stateframe has a valid Timestamp, and Antenna A is not in the subarray, so exit
                 break
-        #print 'Sending command','frm-set-pa '+str(pa_to_send)+' ant16'
+        #print('Sending command','frm-set-pa '+str(pa_to_send)+' ant16')
         send_cmds(['frm-set-pa '+str(pa_to_send)+' ant16'],acc)
         # Sleep for number of seconds given by rate (but checking for Abort message every second), 
         # and then repeat

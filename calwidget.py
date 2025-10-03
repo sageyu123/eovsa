@@ -54,7 +54,9 @@
 #    Updated to use either 13 or 15 solar antennas, with Ant A either 14 or 16.
 #  2025-06-08  DG
 #    Lots of changes to fix various bugs...it seems to be working now.
-#
+#  2025-10-02 SY
+#   Added cutoff date for applying parallatic angle correction to phase to accommodate
+#   new parallactic angle rotating mechanism
 
 import matplotlib
 matplotlib.use('TkAgg')
@@ -277,7 +279,7 @@ class App():
         self.ant_selected = ant
         
     def do_SQL(self):
-        #print 'Selected Save to SQL button.'
+        #print('Selected Save to SQL button.')
         k = self.scan_selected
         rk = self.ref_selected
         data = self.pc_dictlist[k]
@@ -372,7 +374,7 @@ class App():
         '''The user has pressed a key while the mouse is in an active
            plot window, so get information and act accordingly.
         '''
-        #print 'Key',event.key,'at data coordinates',event.xdata,event.ydata
+        #print('Key',event.key,'at data coordinates',event.xdata,event.ydata)
         if event.xdata is None or event.xdata < 2:
             # Indicates mouse is not in a window, or the window does not
             # contain valid times.
@@ -490,8 +492,8 @@ class App():
                             tflags[ant,band:,1,k] = 0
                         else:
                             tflags[ant,band,1,k] = 0
-#                print 'K k nl   aa   ab   hb  a b'
-#                print key, k, nlines, allants, allbands, higherbands, ant, band
+#                print('K k nl   aa   ab   hb  a b')
+#                print(key, k, nlines, allants, allbands, higherbands, ant, band)
                 self.pc_dictlist[self.scan_selected]['tflags'] = tflags
                 
     def use_date(self, event):
@@ -636,7 +638,7 @@ class App():
             trange = Time([st_time.mjd,en_time.mjd],format='mjd')
             times, wscram, avgwind = db.a14_wscram(trange)  # Returns None for wscram (and avgwind) if an error
             if wscram is None:
-                print times," WINDSCRAM check will be skipped for this scan."
+                print(times," WINDSCRAM check will be skipped for this scan.")
             else:
                 nwind = len(wscram)
                 nbad = np.sum(wscram)
@@ -691,7 +693,7 @@ class App():
                 self.pc_scanbox.selection_clear(k+2)             
                 self.status.config(text = 'Status: 2 lines selected, lines '+str(curscan)+' '+str(k)+' 1st not refcal!')
             elif line1[-1] != 'R':
-                print line1,'is not an already analyzed REFCAL scan.'
+                print(line1,'is not an already analyzed REFCAL scan.')
                 self.pc_scanbox.selection_clear(k+2)
                 self.status.config(text = 'Status: 2 lines selected, lines '+str(curscan)+' '+str(k)+' 2nd not refcal!')
                 return
@@ -795,7 +797,7 @@ class App():
                             try:
                                 ax1[j,i].plot(bands[good],np.abs(data['x'][i,j,good]),'.')
                             except:
-                                print 'ant',i+1,'pol',j+1,bands.shape,data['x'].shape,good
+                                print('ant',i+1,'pol',j+1,bands.shape,data['x'].shape,good)
                             try:
                                 phz = np.unwrap(data['pdiff'][i,j,good])
                                 # unwrap starts with phz[0], so make sure it is in the lobe nearest to 0.
@@ -837,7 +839,7 @@ class App():
         if event.xdata is None:
             pass
         else:
-            #print 'Ant =',np.floor(event.xdata), 'Band =',np.floor(event.ydata)
+            #print('Ant =',np.floor(event.xdata), 'Band =',np.floor(event.ydata))
             if self.ab_text.get_text() != '':
                 # No active band map, so do nothing
                 pass
@@ -906,8 +908,8 @@ class App():
                     #fig.canvas.show()
                     fig.canvas.get_tk_widget().focus_force()
                     self.nb_ant.select(0)
-                    #print band,'selected.'
-                    #print self.pc_dictlist[self.scan_selected].keys()
+                    #print(band,'selected.')
+                    #print(self.pc_dictlist[self.scan_selected].keys())
                 else:
                     self.status.config(text = 'Error: Non-existent antenna selected')
                     self.status.update()
@@ -1025,23 +1027,23 @@ class App():
             hidict = self.pc_dictlist[j]
             hiscan = j
         if lodict is None or hidict is None:
-            print 'Selected Refcal scans do not form a LO-HI pair.'
-            print 'Scan 1 has',nflagged_i,'flagged points and Scan 2 has',nflagged_j,'flagged points.'
-            print 'The LO receiver scan should have >'+str(80*nsolant)+' flagged datapoints and the HI receiver should have <'+str(80*nsolant)+'.'
+            print('Selected Refcal scans do not form a LO-HI pair.')
+            print('Scan 1 has',nflagged_i,'flagged points and Scan 2 has',nflagged_j,'flagged points.')
+            print('The LO receiver scan should have >'+str(80*nsolant)+' flagged datapoints and the HI receiver should have <'+str(80*nsolant)+'.')
             return
         # The LO and HI receiver dicts have been identified.  Now determine phase slope of LO
         # relative to HI, and apply to correct the LO phases
-        # print 'Writing out file /tmp/calwidget_out.txt'
+        # print('Writing out file /tmp/calwidget_out.txt')
         # f = open('/tmp/calwidget_out.txt','wb')
-        # print lodict['fghz'].shape, lodict['fghz'].dtype
+        # print(lodict['fghz'].shape, lodict['fghz'].dtype)
         # f.write(lodict['fghz'])
-        # print lodict['x'].shape, lodict['x'].dtype
+        # print(lodict['x'].shape, lodict['x'].dtype)
         # f.write(lodict['x'])
-        # print lodict['flags'].shape, lodict['flags'].dtype
+        # print(lodict['flags'].shape, lodict['flags'].dtype)
         # f.write(lodict['flags'])
-        # print hidict['x'].shape, hidict['x'].dtype
+        # print(hidict['x'].shape, hidict['x'].dtype)
         # f.write(hidict['x'])
-        # print hidict['flags'].shape, hidict['flags'].dtype
+        # print(hidict['flags'].shape, hidict['flags'].dtype)
         # f.write(hidict['flags'])
         # f.close()
         fghz = lodict['fghz']
@@ -1102,11 +1104,11 @@ class App():
         if self.fixdrift.get():
             phacal = fix_time_drift(phacal)
         out = refcal_anal(phacal)
-        #print out['vis'].shape
+        #print(out['vis'].shape)
 
         # Now calculate the phase difference wrt the appropriate refcal
         pcout = phase_diff(out,self.pc_dictlist[self.ref_selected])
-        #print out['vis'].shape, out['mbd'].shape
+        #print(out['vis'].shape, out['mbd'].shape)
         self.pc_dictlist[i].update(out)
         self.saved[i] = False  # Mark as unsaved
         self.pc_scanbox.delete(2,Tk.END)
@@ -1159,7 +1161,7 @@ def phase_diff(phacal, refcal):
     
     fghz = phacal['fghz']
     if len(fghz) != len(refcal['fghz']):
-        print 'Status: Phase and Reference calibrations have different frequencies.  No action taken.'
+        print('Status: Phase and Reference calibrations have different frequencies.  No action taken.')
         return phacal
     if refcal['mjd'] < Time('2025-05-22').mjd:
         nsolant = 13
@@ -1286,35 +1288,36 @@ def rd_refcal(file, quackint=120., navg=3):
         for a in range(nsolant+1):
             dxy[a, bd - 1] = np.angle(np.sum(np.exp(1j * dph[a, sidx[b]:eidx[b]])))
     bands = np.array(freq2bdname(fghz))
-    # Read parallactic angles for this scan
-    trange = Time(out['time'][[0,-1]],format='jd')
-    times, chi = db.get_chi(trange)
-    tchi = times.jd
-    t = out['time']
-    # This entire section needs rewriting when we start nightly Ant A feed rotation to zero the parallactic angle
-    if len(t) > 0:
-        vis2 = deepcopy(vis)
-        idx = nearest_val_idx(t, tchi)
-        pa = chi[idx]  # Parallactic angle for the times of this refcal.
-        if nsolant == 13:
-            pa[:, [8, 9, 10, 12]] = 0.0    # From a time before old antenna replacement
-        nt = len(idx)  # Number of times in this refcal
-        # Apply X-Y delay phase correction
-        for a in range(nsolant):
-            a1 = lobe(dxy[a] - dxy[nsolant])
-            a2 = -dxy[nsolant] - xi
-            a3 = dxy[a] - xi + np.pi
-            for j in range(nt):
-                vis2[a, 1, :, j] *= np.exp(1j * a1)
-                vis2[a, 2, :, j] *= np.exp(1j * a2)
-                vis2[a, 3, :, j] *= np.exp(1j * a3)
-        for j in range(nt):
+    if mjd <= Time('2025-07-15').mjd:
+        # Read parallactic angles for this scan
+        trange = Time(out['time'][[0,-1]],format='jd')
+        times, chi = db.get_chi(trange)
+        tchi = times.jd
+        t = out['time']
+        # This entire section needs rewriting when we start nightly Ant A feed rotation to zero the parallactic angle
+        if len(t) > 0:
+            vis2 = deepcopy(vis)
+            idx = nearest_val_idx(t, tchi)
+            pa = chi[idx]  # Parallactic angle for the times of this refcal.
+            if nsolant == 13:
+                pa[:, [8, 9, 10, 12]] = 0.0    # From a time before old antenna replacement
+            nt = len(idx)  # Number of times in this refcal
+            # Apply X-Y delay phase correction
             for a in range(nsolant):
-                vis[a, 0, :, j] = vis2[a, 0, :, j] * np.cos(pa[j, a]) + vis2[a, 3, :, j] * np.sin(pa[j, a])
-                vis[a, 2, :, j] = vis2[a, 2, :, j] * np.cos(pa[j, a]) + vis2[a, 1, :, j] * np.sin(pa[j, a])
-                vis[a, 3, :, j] = vis2[a, 3, :, j] * np.cos(pa[j, a]) - vis2[a, 0, :, j] * np.sin(pa[j, a])
-                vis[a, 1, :, j] = vis2[a, 1, :, j] * np.cos(pa[j, a]) - vis2[a, 2, :, j] * np.sin(pa[j, a])
-    # *******
+                a1 = lobe(dxy[a] - dxy[nsolant])
+                a2 = -dxy[nsolant] - xi
+                a3 = dxy[a] - xi + np.pi
+                for j in range(nt):
+                    vis2[a, 1, :, j] *= np.exp(1j * a1)
+                    vis2[a, 2, :, j] *= np.exp(1j * a2)
+                    vis2[a, 3, :, j] *= np.exp(1j * a3)
+            for j in range(nt):
+                for a in range(nsolant):
+                    vis[a, 0, :, j] = vis2[a, 0, :, j] * np.cos(pa[j, a]) + vis2[a, 3, :, j] * np.sin(pa[j, a])
+                    vis[a, 2, :, j] = vis2[a, 2, :, j] * np.cos(pa[j, a]) + vis2[a, 1, :, j] * np.sin(pa[j, a])
+                    vis[a, 3, :, j] = vis2[a, 3, :, j] * np.cos(pa[j, a]) - vis2[a, 0, :, j] * np.sin(pa[j, a])
+                    vis[a, 1, :, j] = vis2[a, 1, :, j] * np.cos(pa[j, a]) - vis2[a, 2, :, j] * np.sin(pa[j, a])
+        # *******
     if fghz[1] < 1.:
         fghz[1] = 1.9290   # This band is missing, but no need to set its frequency to zero...
     return {'file': file, 'source': out['source'], 'vis': vis, 'bands': bands, 'fghz': fghz, 'times': out['time'], 'ha': out['ha'], 'dec': out['dec'], 'flag': np.zeros_like(vis, dtype=np.int)}
