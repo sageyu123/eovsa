@@ -259,7 +259,8 @@ def xdata_display(t,ax=None):
     import astropy.units as u
 
     utc2pst = -8 * u.hour # The difference between UTC and pst time. The diff between pst and pdt does not matter here.
-    fdb = dump_tsys.rd_fdb(t+utc2pst)
+    t_pst = t + utc2pst
+    fdb = dump_tsys.rd_fdb(t_pst)
     # Get files from next day, in case scan extends past current day
     t1 = Time(t.mjd + 1,format='mjd')+utc2pst
     fdb1 = dump_tsys.rd_fdb(t1)
@@ -306,7 +307,7 @@ def xdata_display(t,ax=None):
             path = '/data1/IDB/'
             if not os.path.isdir(path+files[0]):
                 # Look in /dppdata1
-                datstr = t.iso[:10].replace('-','')
+                datstr = t_pst.iso[:10].replace('-','')
                 # path = '/data1/eovsa/fits/IDB/'+datstr+'/'
                 path = get_idbdir(t)+datstr+'/'
                 if not os.path.isdir(path+files[0]):
