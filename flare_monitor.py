@@ -330,6 +330,8 @@ def xdata_display(t, ax=None):
                     scan = None
                     times = None
                     return scan, tlevel, bflag, times
+            else:
+                files = [os.path.join(path, file) for file in filelist]
             # data, uvw, fghz, times = gd.get_X_data(files)
             out = ri.read_idb(files)
             print('Files read at', Time.now())
