@@ -272,7 +272,8 @@ def xdata_display(t, ax=None):
     # Concatenate the two days (if the second day exists)
     if fdb1 != {}:
         for key in fdb.keys():
-            fdb[key] = np.concatenate((fdb[key], fdb1[key]))
+            if key in fdb1.keys():
+                fdb[key] = np.concatenate((fdb[key], fdb1[key]))
 
     # Find unique scan IDs
     scans, idx = np.unique(fdb['SCANID'], return_index=True)

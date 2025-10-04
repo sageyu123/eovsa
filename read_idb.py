@@ -794,8 +794,8 @@ def read_idb(trange,navg=None, nmax=600, quackint=0.,filter=True,srcchk=True,src
                     out['ha'] = ha
 
                 datalist.append(out)
-        except:
-            print 'The problematic file is:',file
+        except Exception as e:
+            print 'The problematic file is: ' ,file, '.  Error message: ', e
             
     if len(datalist) == 0:
         return {}
