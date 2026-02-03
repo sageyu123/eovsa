@@ -37,10 +37,14 @@
 #      Significant changes to work with 16 antennas, with Ant A as Ant 16.  Note
 #      that this code is only for updating current delays, so does not have
 #      to work for past data.
+#   2026-Jan-10  YW
+#       Added auto-scan functionality to enable auto-x-delay-solution finding by
+#       maxmizing R = |mean(exp(i*phi_res))|
 
 from Tkinter import *
 from tkFileDialog import askopenfile
 from tkMessageBox import askyesno
+from tkMessageBox import showerror
 import os
 import numpy as np
 from util import Time, lobe, common_val_idx
@@ -60,7 +64,7 @@ class App():
         #self.root.geometry("+100+0")
         # Set window title
         self.root.wm_title('Delay Widget')
-        
+
         self.menu = Menu(self.root)
 
         filemenu = Menu(self.menu, tearoff = 0)
@@ -76,9 +80,9 @@ class App():
         fmain.pack()
         line1 = Frame(fmain)
         line1.pack()
-        Label(line1, text='Ant A Y-X Delay', font="Helvetica 14").pack(side=LEFT,expand=1)
+        Label(line1, text='Ant A Y-X Delay', font=("Helvetica","14")).pack(side=LEFT,expand=1)
         self.dlaAvar = StringVar()
-        self.dlaA = Entry(line1, textvariable=self.dlaAvar, font="Helvetica 14", width=5)
+        self.dlaA = Entry(line1, textvariable=self.dlaAvar, font=("Helvetica", "14"), width=5)
         self.dlaAvar.set('0.0')
         self.dlaA.bind("<Return>", self.fetch)
         self.dlaA.pack(side=LEFT)
@@ -95,9 +99,9 @@ class App():
         fleft.pack(side=LEFT)
         leftant = Frame(fleft)
         leftant.pack(side=TOP)
-        Label(leftant, text='Ant', font="Helvetica 14").pack(side=LEFT)
+        Label(leftant, text='Ant', font=("Helvetica", "14")).pack(side=LEFT)
         self.antvar = StringVar()
-        self.ant = Entry(leftant, textvariable=self.antvar, font="Helvetica 14", width=3)
+        self.ant = Entry(leftant, textvariable=self.antvar, font=("Helvetica", "14"), width=3)
         self.antvar.set('1')
         #self.ant.bind("<Return>", self.fetch)
         self.ant.pack(side=LEFT)
@@ -109,13 +113,13 @@ class App():
         self.antupbtn.pack(padx=1,pady=0)
         self.antdnbtn = Button(antupdown, text=u'\u25BC', command=self.down, borderwidth=0, pady=0)
         self.antdnbtn.pack(padx=1,pady=0)
-        
+
         leftdla = Frame(fleft)
         leftdla.pack()
-        Label(leftdla, text='X Delay', font="Helvetica 14").pack(side=LEFT)
+        Label(leftdla, text='X Delay', font=("Helvetica", "14")).pack(side=LEFT)
         self.delays = np.zeros(15,np.float)
         self.dlavar = StringVar()
-        self.dla = Entry(leftdla, textvariable=self.dlavar, font="Helvetica 14", width=5)
+        self.dla = Entry(leftdla, textvariable=self.dlavar, font=("Helvetica", "14"), width=5)
         self.dlavar.set(str(self.delays[0]))
         self.dla.bind("<Return>", self.fetch)
         self.dla.pack(side=LEFT)
@@ -127,12 +131,31 @@ class App():
         self.dladnbtn = Button(dlaupdown, text=u'\u25BC', command=self.downdla, borderwidth=0, pady=0)
         self.dladnbtn.pack(padx=1,pady=0)
 
+        # --- Automatic X-delay scan controls (added; does not alter existing behavior) ---
+        scanframe = Frame(fleft)
+        scanframe.pack()
+        Label(scanframe, text='Scan X Delay', font=("Helvetica", "12")).pack(side=LEFT)
+        Label(scanframe, text='Min', font=("Helvetica", "12")).pack(side=LEFT)
+        self.scanminvar = StringVar()
+        self.scanmin = Entry(scanframe, textvariable=self.scanminvar, font=("Helvetica", "12"), width=6)
+        self.scanminvar.set('-20.0')
+        self.scanmin.pack(side=LEFT)
+        Label(scanframe, text='Max', font=("Helvetica", "12")).pack(side=LEFT)
+        self.scanmaxvar = StringVar()
+        self.scanmax = Entry(scanframe, textvariable=self.scanmaxvar, font=("Helvetica", "12"), width=6)
+        self.scanmaxvar.set('20.0')
+        self.scanmax.pack(side=LEFT)
+        self.scanbtn = Button(scanframe, text='Scan', command=self.scan_xdelay)
+        self.scanbtn.pack(side=LEFT, padx=3)
+        self.scanresult = Label(fleft, text='', font=("Helvetica", "12"))
+        self.scanresult.pack()
+
         leftxydla = Frame(fleft)
         leftxydla.pack()
-        Label(leftxydla, text='Y-X Delay', font="Helvetica 14").pack(side=LEFT)
+        Label(leftxydla, text='Y-X Delay', font=("Helvetica", "14")).pack(side=LEFT)
         self.xydelays = np.zeros(15,np.float)
         self.xydlavar = StringVar()
-        self.xydla = Entry(leftxydla, textvariable=self.xydlavar, font="Helvetica 14", width=5)
+        self.xydla = Entry(leftxydla, textvariable=self.xydlavar, font=("Helvetica", "14"), width=5)
         self.xydlavar.set(str(self.xydelays[0]))
         self.xydla.bind("<Return>", self.fetch)
         self.xydla.pack(side=LEFT)
@@ -163,7 +186,7 @@ class App():
 
         fright = Frame(line2)
         fright.pack()
-        
+
         self.fig = plt.figure(1,(10,5))
         self.ax = []
         loc = [231,232,234,235,133]
@@ -181,11 +204,11 @@ class App():
         savebtn.pack(side=LEFT,padx=3,pady=3)
         quitbtn = Button(fmain, text='Exit', command=self.root.quit)
         quitbtn.pack(side=LEFT,padx=3,pady=3)
-        self.label1 = Label(fmain,text='',font='Courier 10')
+        self.label1 = Label(fmain,text='',font=('Courier', '10'))
         self.label1.pack()
-        self.label2 = Label(fmain,text='',font='Courier 10')
+        self.label2 = Label(fmain,text='',font=('Courier', '10'))
         self.label2.pack()
-        self.label3 = Label(fmain,text='',font='Courier 10')
+        self.label3 = Label(fmain,text='',font=('Courier', '10'))
         self.label3.pack()
 
         # Some test data to play with
@@ -204,6 +227,8 @@ class App():
             self.ph[:,1,k] = 2*np.pi*fghz*(tauyA - tauy) + df[:,1,k] # YY
             self.ph[:,2,k] = 2*np.pi*fghz*(tauyA - taux) + df[:,2,k] # XY
             self.ph[:,3,k] = 2*np.pi*fghz*(tauxA - tauy) + df[:,3,k] # YX
+        # Optional per-channel weights used by the scan routine (unity for simulation)
+        self.amp = np.ones_like(self.ph)
         self.doplot(ant=1)
 
     def cb(self):
@@ -211,7 +236,7 @@ class App():
         ant_str = self.ant.get()  # Current antenna showing
         ant = int(ant_str)
         self.missing[ant-1] = self.chkbox.var.get()  # List indicating missing ant (if 1)
-        
+
     def refcb(self):
         # Handle the refant checkbox widget
         ant_str = self.ant.get()  # Current antenna showing
@@ -362,6 +387,101 @@ class App():
         self.xydlavar.set(str(dla))
         self.doplot(ant)
 
+    def scan_xdelay(self):
+        '''Automatic scan over X-delay for the currently selected antenna.
+
+        The scan metric is the circular coherence of the XX residual phase
+        across frequency: R = |mean(exp(i*phi_res))| (0..1). The best X-delay
+        is the delay value that maximizes R.
+        '''
+        ant_str = self.ant.get()
+        try:
+            ant = int(ant_str)
+        except:
+            showerror('Scan X Delay', 'Invalid antenna number.')
+            return
+
+        # Parse scan range
+        try:
+            tmin = float(self.scanmin.get())
+            tmax = float(self.scanmax.get())
+        except:
+            showerror('Scan X Delay', 'Invalid scan range. Please enter numeric Min/Max.')
+            return
+        if tmax < tmin:
+            tmin, tmax = tmax, tmin
+
+        # Step matches the existing up/down increment for X-delay
+        step = 0.1
+        if tmax == tmin:
+            taus = np.array([tmin], dtype=float)
+        else:
+            nt = int(np.floor((tmax - tmin)/step + 1e-9)) + 1
+            taus = tmin + step*np.arange(nt, dtype=float)
+            if len(taus) == 0:
+                showerror('Scan X Delay', 'Empty scan range.')
+                return
+
+        # Build the base phase for the XX panel (pol index 0)
+        xxpol = 0
+        f = np.array(self.fghz, dtype=float)
+        # Reference antenna selection is for display; delay reference remains with Ant 1
+        refant, = np.where(self.refant==1)
+        if len(refant) == 0:
+            refant = 0
+        else:
+            refant = int(refant[0])
+
+        # Ant-1 delay is used as the center reference in the existing display logic
+        tau1 = float(self.delays[0])
+
+        try:
+            if ant == refant + 1:
+                base_phase = self.ph[ant-1, xxpol]
+                if hasattr(self,'amp'):
+                    w = self.amp[ant-1, xxpol]
+                else:
+                    w = np.ones_like(base_phase)
+            else:
+                base_phase = self.ph[ant-1, xxpol] - self.ph[refant, xxpol] + 2*np.pi*f*tau1
+                if hasattr(self,'amp'):
+                    # Use geometric mean weight so that channels with very low amplitude
+                    # on either baseline are down-weighted.
+                    w = np.sqrt(np.abs(self.amp[ant-1, xxpol]) * np.abs(self.amp[refant, xxpol]))
+                else:
+                    w = np.ones_like(base_phase)
+        except Exception as e:
+            showerror('Scan X Delay', 'Could not access phase data for scanning.')
+            return
+
+        # Guard against pathological weight vectors
+        wsum = np.sum(w)
+        if not np.isfinite(wsum) or wsum <= 0:
+            w = np.ones_like(base_phase)
+            wsum = float(len(w))
+
+        # Compute coherence efficiently across a regular tau grid using recurrence
+        phasor_base = w * np.exp(1j*base_phase)
+        exp_factor = np.exp(-1j*2*np.pi*f*taus[0])
+        incr = np.exp(-1j*2*np.pi*f*step) if len(taus) > 1 else None
+
+        best_tau = float(taus[0])
+        best_R = -1.0
+        for i in range(len(taus)):
+            s = np.sum(phasor_base * exp_factor)
+            R = np.abs(s) / wsum
+            if R > best_R:
+                best_R = float(R)
+                best_tau = float(taus[i])
+            if incr is not None:
+                exp_factor = exp_factor * incr
+
+        # Apply the best delay guess and update display
+        self.delays[ant-1] = best_tau
+        self.dlavar.set(str(best_tau))
+        self.scanresult.configure(text='Best X Delay: %.2f (coh=%.3f)' % (best_tau, best_R))
+        self.doplot(ant)
+
     def doplot(self,ant=1):
         polstr = ['XX','XY','YX','YY']
         dla = self.delays[ant-1]
@@ -372,7 +492,7 @@ class App():
         ydlaA = np.float(self.dlaA.get())
         for i,ax in enumerate(self.ax[:4]):
             if self.pol[i] == 0:
-                # XX => use only the ant X delay 
+                # XX => use only the ant X delay
                 tau = dla
                 tau1 = dla1
             elif self.pol[i] == 1:
@@ -391,7 +511,7 @@ class App():
             refant, = np.where(self.refant==1)
             refant = refant[0]
             if ant == refant+1:
-                ax.plot(self.fghz,lobe(self.ph[ant-1,self.pol[i]] - 2*np.pi*self.fghz*tau),'.',label=polstr[i])                
+                ax.plot(self.fghz,lobe(self.ph[ant-1,self.pol[i]] - 2*np.pi*self.fghz*tau),'.',label=polstr[i])
                 if self.pol[i] == 0:
                     pxx = lobe(self.ph[ant-1,self.pol[i]] - 2*np.pi*self.fghz*tau)
                 if self.pol[i] == 1:
@@ -435,10 +555,15 @@ class App():
         # Set time for delays as end time of data (for lack of a better choice)
         self.time = Time(out['time'][-1],format='jd')
         nsolant = 15
-        self.ph = np.angle(np.sum(out['x'][ri.bl2ord[0:nsolant,nsolant]],3))
+        # Keep the original phase product (self.ph) for display,
+        # but also store a per-channel amplitude (self.amp) for optional
+        # weighting in the automatic X-delay scan.
+        vx = np.sum(out['x'][ri.bl2ord[0:nsolant,nsolant]],3)
+        self.ph = np.angle(vx)
+        self.amp = np.abs(vx)
         self.data_source = 'Data'
         self.doplot()
-                
+
     def Save(self):
         # Send saved delays to the SQL database and the ACC (if the data source is not 'Simulation')
         if self.data_source == 'Data':
@@ -474,7 +599,7 @@ class App():
             else:
                 question = "Save delays to SQL and ACC?"
             import cal_header as ch
-            
+
             delays = self.delays[0] - self.delays
             delays = np.append(delays,self.delays[0])
             # Have to change the sign of Ant A Y-X delay, hence the minus sign
@@ -490,7 +615,7 @@ class App():
                 if xydelays[i] != 0.0:
                     question = "Some Ant1-15 delays are not 0, but will NOT be updated.  Save anyway?"
                     break
-            
+
             if askyesno("Write Delays",question):
                 # All Y-X delays need a sign flip, hence the minus sign
                 # ************ This block commented out due to loss of SQL **************
@@ -499,8 +624,7 @@ class App():
                 ch.dla_censql2table()
                 # Replaced by
                 #ch.dla_update2table(delays,-xydelays,lorx=True)
-                
+
 app = App()
 
 mainloop()
-        
