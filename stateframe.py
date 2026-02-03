@@ -275,7 +275,7 @@ def rd_solpwr(url='http://data.magnumenergy.com/MW5127'):
     return solpwr
 
 #============================
-def rd_ACCfile():
+def rd_ACCfile(host = None):
     '''Reads key variables from ACC.ini file on ACC (using urllib2)
     '''
     # List of strings to search for
@@ -291,7 +291,10 @@ def rd_ACCfile():
     
     userpass = 'admin:observer@'
     ACCfile = None
-    if socket.getfqdn().find('solar.pvt') != -1:
+    # Historically we only attempted FTP when on a solar.pvt host.  ovsa can
+    # still reach acc.solar.pvt, so also allow FTP when running on ovsa.
+    fqdn = socket.getfqdn()
+    if fqdn.find('solar.pvt') != -1 or host == 'ovsa' or fqdn.startswith('ovsa'):
         try:
             ACCfile = urllib2.urlopen('ftp://'+userpass+'acc.solar.pvt/ni-rt/startup/acc.ini',timeout=0.5)
         except:
@@ -304,14 +307,23 @@ def rd_ACCfile():
             lines = ACCfile.readlines()
             o = open('acc.ini','w')
             for line in lines:
-                o.write(line+'\n')
+                # Lines already include trailing newlines.
+                o.write(line)
             o.close()
             ACCfile.close()
-            ACCfile = urllib2.urlopen('ftp://'+userpass+'acc.solar.pvt/ni-rt/startup/acc.ini',timeout=0.5)
-            # Also read XML file for stateframe from ACC, and decode template for later use
-            sf, version = xml_ptrs()
+            try:
+                ACCfile = urllib2.urlopen('ftp://'+userpass+'acc.solar.pvt/ni-rt/startup/acc.ini',timeout=0.5)
+            except:
+                # If the second open fails, force fallback to local static files.
+                ACCfile = None
+            if ACCfile is not None:
+                # Also read XML file for stateframe from ACC, and decode template for later use
+                try:
+                    sf, version = xml_ptrs()
+                except:
+                    pass
         except:
-            pass
+            ACCfile = None
     if ACCfile is None:
         # ACC not reachable?  Try reading static files.
         print('Cannot ftp ACC.ini.  Reading static acc.ini and stateframe.xml from current directory instead.')
@@ -372,7 +384,10 @@ def rd_stateframe(s,sf_num,n_expected):
         #sys.stdout.write('.')
         #sys.stdout.flush()  # Flush stdout (/tmp/schedule.log) so we can see the output.
         while totlen < n_expected:
-            data = s.recv(n_expected)
+            # Read only what's still needed, and stop if the peer closes.
+            data = s.recv(n_expected - totlen)
+            if data == '':
+                break
             totdata.append(data)
             totlen = sum([len(i) for i in totdata])
         #sys.stdout.write('-')

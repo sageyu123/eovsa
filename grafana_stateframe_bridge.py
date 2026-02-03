@@ -342,7 +342,7 @@ class StateframeSampler(object):
     """Continuously samples the ACC stateframe and keeps the latest and historical payloads."""
 
     def __init__(self, poll_interval=1.0, antlist=None, history_seconds=3600, history_max_points=1800):
-        self.accini = stf.rd_ACCfile()
+        self.accini = stf.rd_ACCfile(host='ovsa')
         self.sf = self.accini['sf']
         if antlist is None:
             antlist = range(16)
