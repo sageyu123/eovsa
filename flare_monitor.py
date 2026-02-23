@@ -593,8 +593,8 @@ if __name__ == "__main__":
     datstr = t.iso[:10].replace('-', '')
     # plt.savefig('/common/webplots/flaremon/FLM'+datstr+'.png',bbox_inches='tight')
     plt.close(f)
-    print('Plot written to /common/webplots/flaremon/FLM' + datstr + '.png')
+    # print('Plot written to /common/webplots/flaremon/FLM' + datstr + '.png')
     # Copy the most recent two files to fixed names so that the web page can find them.
-    flist = np.sort(glob.glob('/common/webplots/flaremon/XSP20*'))
+    flist = np.sort(glob.glob('/common/webplots/flaremon/XSP20????????????.png'))
     shutil.copy(flist[-1], '/common/webplots/flaremon/XSP_latest.png')
     shutil.copy(flist[-2], '/common/webplots/flaremon/XSP_later.png')
