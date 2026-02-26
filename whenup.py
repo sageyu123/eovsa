@@ -582,11 +582,14 @@ def remove_cal(lines):
     keepidx = []
     sunidx = []
     rmidx = []
-    # Keep all SUN lines and the line following
+    # Keep all SUN lines and the line following. Also keep GAINSOLPNT lines;
+    # these should remain even in "No 27m" mode.
     for i,line in enumerate(lines):
         if line.find('SUN') > 0:
             keepidx.append(i)
             keepidx.append(i+1)
+        if line.find('GAINSOLPNT') > 0:
+            keepidx.append(i)
         if line.find('SKYCAL') > 0:
             keepidx.append(i-1)
             keepidx.append(i)
@@ -607,8 +610,15 @@ def remove_cal(lines):
             rmidx.append(i+2)
     outlines = []
     for i,line in enumerate(keeplines):
-        if not i in rmidx:
-            outlines.append(line)
+        if i in rmidx:
+            continue
+        tokens = line[20:].split()
+        if len(tokens) > 0:
+            cmd = tokens[0].upper()
+            if cmd == 'ACQUIRE' or cmd.startswith('PHASECAL'):
+                # "No 27m" mode: drop all refcal/phasecal blocks.
+                continue
+        outlines.append(line)
     outlines[-1] = outlines[-1][:19]+' REWIND'
     return outlines
     

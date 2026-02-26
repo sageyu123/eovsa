@@ -660,16 +660,44 @@ def solpnt_offsets(inparams, meta=None, savefig=True):
     decoff = eloff
     azoff = cross_eloff/np.cos(meta['el0'])
     raoff = cross_decoff/np.cos(meta['dec0'])
+    lim = 5000.0
+    # Legend proxies for map components (keeps legend stable across data conditions).
+    ax.plot([],[],'k.',alpha=0.2)
+    ax.plot([],[],'k*')
+    ax.plot([],[],'k')
+    ax.plot([],[],'k>',label='Off-FOV antenna (arrow)')
     for i in antidx:
         ax.plot((px[1,200:300,i]-py[1,200:300,i])*cp4,
             -(px[1,200:300,i]+py[1,200:300,i])*cp4,'.',alpha=0.2)
     for i in antidx:
-        ax.plot(cross_eloff[i],eloff[i],'k*')
-        ax.plot([cross_eloff[i]-dx[i]*cp4,cross_eloff[i]+dx[i]*cp4],
-                [eloff[i]-dx[i]*cp4,eloff[i]+dx[i]*cp4],'k')
-        ax.plot([cross_eloff[i]-dy[i]*cp4,cross_eloff[i]+dy[i]*cp4],
-                [eloff[i]+dy[i]*cp4,eloff[i]-dy[i]*cp4],'k')
-        ax.text(cross_eloff[i],eloff[i]+300,str(i+1),fontsize=14,ha='center')
+        xpt = cross_eloff[i]
+        ypt = eloff[i]
+        if np.abs(xpt) <= lim and np.abs(ypt) <= lim:
+            ax.plot([xpt-dx[i]*cp4,xpt+dx[i]*cp4],
+                    [ypt-dx[i]*cp4,ypt+dx[i]*cp4],'k')
+            ax.plot([xpt-dy[i]*cp4,xpt+dy[i]*cp4],
+                    [ypt+dy[i]*cp4,ypt-dy[i]*cp4],'k')
+            # Draw marker after sigma lines so the median point remains visible.
+            ax.plot(xpt,ypt,'k*',markersize=12,zorder=5)
+            ax.text(xpt,ypt+300,str(i+1),fontsize=14,ha='center')
+        else:
+            # Place arrow at the map boundary along radial direction from (0,0).
+            scale = np.max([np.abs(xpt)/lim, np.abs(ypt)/lim])
+            xedge = xpt/scale
+            yedge = ypt/scale
+            xbase = 0.88*xedge
+            ybase = 0.88*yedge
+            ax.annotate('',xy=(xedge,yedge),xytext=(xbase,ybase),
+                        arrowprops=dict(arrowstyle='->',color='k',lw=1.5))
+            label = 'A{0} ({1:.0f},{2:.0f})'.format(i+1,xpt,ypt)
+            ha = 'left'
+            va = 'bottom'
+            if xedge < 0:
+                ha = 'right'
+            if yedge < 0:
+                va = 'top'
+            ax.text(0.80*xedge,0.80*yedge,label,fontsize=9,ha=ha,va=va,
+                    bbox=dict(facecolor='white',alpha=0.75,edgecolor='none',pad=1.5))
     tstr = Time(meta['Timestamp'],format='lv').iso[:19]
     ax.set_title('Pointing Offsets for '+tstr)
     ax.set_xlabel('Az or RA Offset')
@@ -678,8 +706,9 @@ def solpnt_offsets(inparams, meta=None, savefig=True):
     ax.fill(2500*np.cos(th),2500*np.sin(th),color='lightyellow')
     ax.plot(2500*np.cos(th),2500*np.sin(th),color='r')
     ax.axis('square')
-    ax.set_xlim(-5000,5000)
-    ax.set_ylim(-5000,5000)
+    ax.set_xlim(-lim,lim)
+    ax.set_ylim(-lim,lim)
+    ax.legend(loc='upper left',fontsize='small',framealpha=0.6)
     if savefig:
         tstr = tstr.replace('-','').replace(':','').replace(' ','')[:14]
         plt.savefig('/common/webplots/PTG/PTG'+tstr+'.png',bbox_inches='tight')
@@ -1006,6 +1035,29 @@ def sp_check_qual(solpnt):
         val = np.median(solpnt['params']['py'][2,:400,i]/aout)
         qual[1,i] = val < 1.1 and val > 0.9
     return qual
+    
+def offset_spec(solout,ant,yrange=(-3000,3000)):
+    ''' Plots offsets for both directions (off and crossoff) for both feed axes (x and y)
+        for a single antenna.
+    '''
+    import matplotlib.pylab as plt
+    f, ax = plt.subplots(4,1, figsize=(5,7))
+    ax[0].set_title('Ant '+str(ant))
+    ax[0].plot(solout['meta']['fghz'],solout['params']['px'][1,:,ant-1],'.',label='xoff',color='skyblue')
+    ax[0].plot(solout['meta']['fghz'],solout['params']['px'][1,:,ant-1],linewidth=1,alpha=0.5,color='skyblue')
+    ax[1].plot(solout['meta']['fghz'],solout['params']['pcrossx'][1,:,ant-1],'.',label='crossxoff',color='skyblue')
+    ax[1].plot(solout['meta']['fghz'],solout['params']['pcrossx'][1,:,ant-1],linewidth=1,alpha=0.5,color='skyblue')
+    ax[2].plot(solout['meta']['fghz'],solout['params']['py'][1,:,ant-1],'.',label='yoff',color='salmon')
+    ax[2].plot(solout['meta']['fghz'],solout['params']['py'][1,:,ant-1],linewidth=1,alpha=0.5,color='salmon')
+    ax[3].plot(solout['meta']['fghz'],solout['params']['pcrossy'][1,:,ant-1],'.',label='crossyoff',color='salmon')
+    ax[3].plot(solout['meta']['fghz'],solout['params']['pcrossy'][1,:,ant-1],linewidth=1,alpha=0.5,color='salmon')
+    ax[3].set_xlabel('Frequency [GHz]')
+    for i in range(4):
+        ax[i].set_ylabel('offset')
+        ax[i].set_ylim(yrange)
+        ax[i].set_xlim(1,19)
+    plt.legend()
+    
 
 # Problem--the autocorr parameters are time-consuming to calculate and can be different than 
 # the total power parameters, leading to an incorrect calibration.  It turns out that I can 

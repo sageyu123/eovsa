@@ -38,34 +38,36 @@ import numpy as np
 from util import Time, lobe, fname2mjd,get_idbdir
 ten_minutes = 600./86400.
 one_minute = 60./86400.
+PHASECAL_WEBROOT = '/nas8/eovsa/phasecal/'
 
 def mv_pcal_files():
-    ''' Moves (renames) files in the /common/webplots/phasecal folder
+    ''' Moves (renames) files in the phasecal web folder
         into new folders according to date.  Leaves the last 20 .npz
         and associated files in the main folder.
     '''
     import glob, os
     from time import sleep
-    npzfiles = glob.glob('/common/webplots/phasecal/20????????*')
+    npzfiles = glob.glob(os.path.join(PHASECAL_WEBROOT, '20????????*'))
     npzfiles.sort()
     #datstr = ''
     if len(npzfiles) > 20:
         for file in npzfiles[:-20]:
             #datstr_prev = datstr
-            datstr = file[26:34]
+            datstr = os.path.basename(file)[:8]
+            year = datstr[:4]
             #if datstr != datstr_prev:
-            directory = file[:34]+'/'
+            directory = os.path.join(PHASECAL_WEBROOT, year, datstr)
             if not os.path.exists(directory):
                 #print 'mkdir',directory 
                 os.makedirs(directory)
                 sleep(0.1)
             #print 'mv',file,directory+os.path.basename(file) 
-            os.rename(file,directory+os.path.basename(file))
-            files = glob.glob('/common/webplots/phasecal/pc?'+datstr+'*')
+            os.rename(file, os.path.join(directory, os.path.basename(file)))
+            files = glob.glob(os.path.join(PHASECAL_WEBROOT, 'pc?'+datstr+'*'))
             files.sort()    
             for f in files:
                 #print 'mv',f,directory+os.path.basename(f) 
-                os.rename(f,directory+os.path.basename(f))
+                os.rename(f, os.path.join(directory, os.path.basename(f)))
 
 def mv_ptg_files():
     ''' Moves (renames) files in the /common/webplots/PTG folder
@@ -329,7 +331,7 @@ if __name__ == '__main__':
     # /home/user/test_svn/shell_scripts/pcal_anal.sh
     import matplotlib
     matplotlib.use('Agg')
-    path='/common/webplots/phasecal/'
+    path=PHASECAL_WEBROOT
     t1 = Time.now().jd-0.25
     t2 = Time.now().jd
     trange = Time([t1,t2],format='jd')
