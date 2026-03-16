@@ -118,6 +118,43 @@ def _safe_time(lv_timestamp):
     return None
 
 
+def _prometheus_escape(value):
+    """Escape label values for Prometheus text exposition format."""
+    text = '' if value is None else str(value)
+    return text.replace('\\', r'\\').replace('\n', r'\n').replace('"', r'\"')
+
+
+def _prometheus_format_value(value):
+    """Format floats/bools in a Prometheus-compatible way."""
+    if isinstance(value, bool):
+        return '1' if value else '0'
+    try:
+        number = float(value)
+    except Exception:
+        return None
+    if np.isnan(number):
+        return None
+    if np.isposinf(number):
+        return '+Inf'
+    if np.isneginf(number):
+        return '-Inf'
+    return repr(number)
+
+
+def _prometheus_sample(name, value, labels=None):
+    """Return one Prometheus sample line or None if the value is invalid."""
+    formatted = _prometheus_format_value(value)
+    if formatted is None:
+        return None
+    if labels:
+        items = sorted(labels.items())
+        rendered = ','.join(
+            '{}="{}"'.format(key, _prometheus_escape(val))
+            for key, val in items)
+        return '{}{{{}}} {}'.format(name, rendered, formatted)
+    return '{} {}'.format(name, formatted)
+
+
 class FlareMonitorReader(object):
     """Tail flaretest files to expose the latest detector measurements."""
 
@@ -371,6 +408,11 @@ class StateframeSampler(object):
         with self._lock:
             return sorted(self._metric_names)
 
+    def prometheus_payload(self):
+        """Return a copy of the latest payload for Prometheus rendering."""
+        with self._lock:
+            return copy.deepcopy(self._latest)
+
     def history_series(self, metrics, start_ms=None, end_ms=None):
         with self._lock:
             samples = list(self._history)
@@ -615,6 +657,17 @@ class GrafanaRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body_bytes)
 
+    def _send_text(self, body, status=200, content_type='text/plain; version=0.0.4; charset=utf-8'):
+        if isinstance(body, bytes):
+            body_bytes = body
+        else:
+            body_bytes = body.encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', len(body_bytes))
+        self.end_headers()
+        self.wfile.write(body_bytes)
+
     def do_GET(self):
         if self.path in ('/', '/stateframe'):
             payload = SAMPLER.latest()
@@ -623,6 +676,8 @@ class GrafanaRequestHandler(BaseHTTPRequestHandler):
             payload = SAMPLER.latest()
             status = 200 if payload.get('error') in (None, 'Sampler not started') else 503
             self._send_json({'status': payload.get('error') or 'ok'}, status=status)
+        elif self.path == '/metrics':
+            self._send_text(self._handle_metrics())
         else:
             self._send_json({'error': 'unknown endpoint'}, status=404)
 
@@ -673,6 +728,149 @@ class GrafanaRequestHandler(BaseHTTPRequestHandler):
             datapoints = [[value, ts] for value, ts in points]
             result.append({'target': metric, 'datapoints': datapoints})
         return result
+
+    def _handle_metrics(self):
+        payload = SAMPLER.prometheus_payload()
+        error = payload.get('error')
+        lines = [
+            '# HELP eovsa_bridge_up Whether the Grafana bridge has a valid latest sample.',
+            '# TYPE eovsa_bridge_up gauge',
+            _prometheus_sample('eovsa_bridge_up', 0 if error else 1)
+        ]
+        if error:
+            lines.extend([
+                '# HELP eovsa_bridge_error_info Latest bridge error as an info-style gauge.',
+                '# TYPE eovsa_bridge_error_info gauge',
+                _prometheus_sample('eovsa_bridge_error_info', 1, {'message': error})
+            ])
+            return '\n'.join(line for line in lines if line) + '\n'
+
+        stateframe_ms = payload.get('stateframe_time_unix_ms')
+        schedule_ms = payload.get('schedule_time_unix_ms')
+        lines.extend([
+            '# HELP eovsa_stateframe_timestamp_seconds Stateframe timestamp in Unix seconds.',
+            '# TYPE eovsa_stateframe_timestamp_seconds gauge',
+            _prometheus_sample('eovsa_stateframe_timestamp_seconds',
+                               stateframe_ms / 1000.0 if stateframe_ms is not None else None),
+            '# HELP eovsa_schedule_timestamp_seconds Scheduler timestamp in Unix seconds.',
+            '# TYPE eovsa_schedule_timestamp_seconds gauge',
+            _prometheus_sample('eovsa_schedule_timestamp_seconds',
+                               schedule_ms / 1000.0 if schedule_ms is not None else None)
+        ])
+
+        task = payload.get('task')
+        if task:
+            lines.extend([
+                '# HELP eovsa_schedule_task_info Current scheduler task as a labeled gauge.',
+                '# TYPE eovsa_schedule_task_info gauge',
+                _prometheus_sample('eovsa_schedule_task_info', 1, {'task': task})
+            ])
+
+        weather = payload.get('weather') or {}
+        lines.extend([
+            '# HELP eovsa_weather_wind_mph Instantaneous wind speed in miles per hour.',
+            '# TYPE eovsa_weather_wind_mph gauge',
+            _prometheus_sample('eovsa_weather_wind_mph', weather.get('wind_mph')),
+            '# HELP eovsa_weather_avg_wind_mph Average wind speed in miles per hour.',
+            '# TYPE eovsa_weather_avg_wind_mph gauge',
+            _prometheus_sample('eovsa_weather_avg_wind_mph', weather.get('avg_wind_mph')),
+            '# HELP eovsa_weather_wind_direction_deg Wind direction in degrees.',
+            '# TYPE eovsa_weather_wind_direction_deg gauge',
+            _prometheus_sample('eovsa_weather_wind_direction_deg', weather.get('wind_direction_deg')),
+            '# HELP eovsa_weather_temperature_f Ambient temperature in Fahrenheit.',
+            '# TYPE eovsa_weather_temperature_f gauge',
+            _prometheus_sample('eovsa_weather_temperature_f', weather.get('temperature_f')),
+            '# HELP eovsa_weather_pressure_mbar Ambient pressure in millibar.',
+            '# TYPE eovsa_weather_pressure_mbar gauge',
+            _prometheus_sample('eovsa_weather_pressure_mbar', weather.get('pressure_mbar'))
+        ])
+        wind_cardinal = weather.get('wind_direction_cardinal')
+        if wind_cardinal:
+            lines.extend([
+                '# HELP eovsa_weather_wind_direction_info Wind direction cardinal label.',
+                '# TYPE eovsa_weather_wind_direction_info gauge',
+                _prometheus_sample('eovsa_weather_wind_direction_info', 1, {'cardinal': wind_cardinal})
+            ])
+
+        roach = payload.get('roach') or {}
+        lines.extend([
+            '# HELP eovsa_control_room_temperature_f Control room temperature in Fahrenheit.',
+            '# TYPE eovsa_control_room_temperature_f gauge',
+            _prometheus_sample('eovsa_control_room_temperature_f', roach.get('control_room_temp_f'))
+        ])
+
+        lines.extend([
+            '# HELP eovsa_solar_charge_pct Solar array charge percentage.',
+            '# TYPE eovsa_solar_charge_pct gauge',
+            '# HELP eovsa_solar_voltage_v Solar array voltage in volts.',
+            '# TYPE eovsa_solar_voltage_v gauge',
+            '# HELP eovsa_solar_current_a Solar array current in amps.',
+            '# TYPE eovsa_solar_current_a gauge',
+            '# HELP eovsa_solar_age_seconds Age of the most recent solar array sample in seconds.',
+            '# TYPE eovsa_solar_age_seconds gauge'
+        ])
+        for entry in payload.get('solar_power', []):
+            labels = {'array': str(entry.get('array'))}
+            lines.append(_prometheus_sample('eovsa_solar_charge_pct', entry.get('charge_pct'), labels))
+            lines.append(_prometheus_sample('eovsa_solar_voltage_v', entry.get('voltage_v'), labels))
+            lines.append(_prometheus_sample('eovsa_solar_current_a', entry.get('current_a'), labels))
+            lines.append(_prometheus_sample('eovsa_solar_age_seconds', entry.get('age_seconds'), labels))
+
+        antenna_metric_defs = [
+            ('eovsa_antenna_az_actual_deg', 'az_actual_deg', 'Actual antenna azimuth in degrees.'),
+            ('eovsa_antenna_az_requested_deg', 'az_requested_deg', 'Requested antenna azimuth in degrees.'),
+            ('eovsa_antenna_el_actual_deg', 'el_actual_deg', 'Actual antenna elevation in degrees.'),
+            ('eovsa_antenna_el_requested_deg', 'el_requested_deg', 'Requested antenna elevation in degrees.'),
+            ('eovsa_antenna_delta_az_deg', 'delta_az_deg', 'Requested minus actual azimuth in degrees.'),
+            ('eovsa_antenna_delta_el_deg', 'delta_el_deg', 'Requested minus actual elevation in degrees.'),
+            ('eovsa_antenna_parallactic_angle_deg', 'parallactic_angle_deg', 'Parallactic angle in degrees.'),
+            ('eovsa_antenna_tracking', 'tracking', 'Tracking flag for each antenna.'),
+            ('eovsa_antenna_track_source', 'track_source', 'Track-source flag for each antenna.'),
+            ('eovsa_frontend_hpol_power_dbm', 'fe_hpol_power_dbm', 'Frontend H-pol power in dBm.'),
+            ('eovsa_frontend_vpol_power_dbm', 'fe_vpol_power_dbm', 'Frontend V-pol power in dBm.'),
+            ('eovsa_backend_hpol_voltage_v', 'be_hpol_voltage_v', 'Backend H-pol voltage in volts.'),
+            ('eovsa_backend_vpol_voltage_v', 'be_vpol_voltage_v', 'Backend V-pol voltage in volts.')
+        ]
+        for metric_name, _, help_text in antenna_metric_defs:
+            lines.append('# HELP {} {}'.format(metric_name, help_text))
+            lines.append('# TYPE {} gauge'.format(metric_name))
+        for antenna in payload.get('antennas', []):
+            labels = {'antenna': '{:02d}'.format(int(antenna.get('id')))}
+            for metric_name, field_name, _ in antenna_metric_defs:
+                lines.append(_prometheus_sample(metric_name, antenna.get(field_name), labels))
+
+        flare = payload.get('flare_monitor') or {}
+        lines.extend([
+            '# HELP eovsa_flare_timestamp_seconds Timestamp of the latest flare monitor sample in Unix seconds.',
+            '# TYPE eovsa_flare_timestamp_seconds gauge',
+            _prometheus_sample('eovsa_flare_timestamp_seconds',
+                               flare.get('timestamp_unix_ms') / 1000.0
+                               if flare.get('timestamp_unix_ms') is not None else None),
+            '# HELP eovsa_flare_flag_active Whether the flare detector is active.',
+            '# TYPE eovsa_flare_flag_active gauge',
+            _prometheus_sample('eovsa_flare_flag_active', flare.get('flag_active')),
+            '# HELP eovsa_flare_mean Mean flare detector value.',
+            '# TYPE eovsa_flare_mean gauge',
+            _prometheus_sample('eovsa_flare_mean', flare.get('mean')),
+            '# HELP eovsa_flare_sigma Flare detector sigma.',
+            '# TYPE eovsa_flare_sigma gauge',
+            _prometheus_sample('eovsa_flare_sigma', flare.get('sigma')),
+            '# HELP eovsa_flare_threshold Flare detector threshold.',
+            '# TYPE eovsa_flare_threshold gauge',
+            _prometheus_sample('eovsa_flare_threshold', flare.get('threshold')),
+            '# HELP eovsa_flare_count Flare detector sample count.',
+            '# TYPE eovsa_flare_count gauge',
+            _prometheus_sample('eovsa_flare_count', flare.get('count')),
+            '# HELP eovsa_flare_age_seconds Age of the latest flare detector sample in seconds.',
+            '# TYPE eovsa_flare_age_seconds gauge',
+            _prometheus_sample('eovsa_flare_age_seconds', flare.get('age_seconds')),
+            '# HELP eovsa_flare_detector Flare detector channel value.',
+            '# TYPE eovsa_flare_detector gauge'
+        ])
+        for idx, value in enumerate(flare.get('detectors') or [], 1):
+            lines.append(_prometheus_sample('eovsa_flare_detector', value, {'detector': str(idx)}))
+
+        return '\n'.join(line for line in lines if line) + '\n'
 
 
 def _parse_antennas(arg):

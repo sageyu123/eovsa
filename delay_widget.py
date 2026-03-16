@@ -280,6 +280,25 @@ class App():
         xydelays_str = fmt.format(*xydelays)
         self.label3.configure(text='   '+xydelays_str[:-1])
 
+    def print_save_delays(self, delays, xydelays, active_idx=None):
+        '''Print delays that are about to be written to SQL/ACC.
+        '''
+        if active_idx is None:
+            active_idx = range(len(delays))
+        active_idx = set(active_idx)
+        values_x = []
+        values_xy = []
+        for i in range(len(delays)):
+            if i in active_idx:
+                values_x.append('{:5.1f}'.format(delays[i]))
+                values_xy.append('{:5.1f}'.format(xydelays[i]))
+            else:
+                values_x.append('    -')
+                values_xy.append('    -')
+        print 'Ant    1,    2,    3,    4,    5,    6,    7,    8,    9,   10,   11,   12,   13,   14,   15,   16'
+        print 'X   ' + ','.join(values_x)
+        print 'Y-X ' + ','.join(values_xy)
+
     def up(self):
         ant_str = self.ant.get()
         ant = int(ant_str)
@@ -568,9 +587,9 @@ class App():
         # Send saved delays to the SQL database and the ACC (if the data source is not 'Simulation')
         if self.data_source == 'Data':
             if (Time.now().mjd - self.time.mjd) > 1.0:
-                question = "Warning: Data more than a day old. Are you sure you want to save delays to SQL and ACC?"
+                question = "Warning: Data more than a day old.\n\nSave FULL delay update (Ant 1-15 + Ant A) to SQL and ACC?"
             else:
-                question = "Save delays to SQL and ACC?"
+                question = "Save delay update (Ant 1-15 + Ant A) to SQL and ACC?"
             import cal_header as ch
             # Calculate delays relative to Ant 1 and tack Ant1-A delay at end
             delays = self.delays[0] - self.delays
@@ -581,6 +600,8 @@ class App():
             bad, = np.where(self.missing == 1)
             delays[bad] = 0.0
             if askyesno("Write Delays",question):
+                print "Saving delay update to SQL and ACC (all antennas + Ant A)."
+                self.print_save_delays(delays, -xydelays)
                 # All Y-X delays need a sign flip, hence the minus sign
                 # ************ This block commented out due to loss of SQL **************
                 ch.dla_update2sql(delays,-xydelays)
@@ -595,9 +616,9 @@ class App():
         # Note, ONLY Ant A delay is changed, and it is ascribed to Ant 15.  No other delay changes are made.
         if self.data_source == 'Data':
             if (Time.now().mjd - self.time.mjd) > 1.0:
-                question = "Warning: Data more than a day old. Are you sure you want to save delays to SQL and ACC?"
+                question = "Warning: Data more than a day old.\n\nSave LoRX-only delay update (Ant A only) to SQL and ACC?"
             else:
-                question = "Save delays to SQL and ACC?"
+                question = "Save LoRX-only delay update (Ant A only) to SQL and ACC?"
             import cal_header as ch
 
             delays = self.delays[0] - self.delays
@@ -610,13 +631,15 @@ class App():
             # Check that the delays to all antennas except Ant A are zero, or give warning if not
             for i in range(15):
                 if delays[i] != 0.0:
-                    question = "Some Ant1-15 delays are not 0, but will NOT be updated.  Save anyway?"
+                    question = "LoRX-only save selected: some Ant1-15 delays are non-zero, but only Ant A will be updated.\n\nSave anyway?"
                     break
                 if xydelays[i] != 0.0:
-                    question = "Some Ant1-15 delays are not 0, but will NOT be updated.  Save anyway?"
+                    question = "LoRX-only save selected: some Ant1-15 delays are non-zero, but only Ant A will be updated.\n\nSave anyway?"
                     break
 
-            if askyesno("Write Delays",question):
+            if askyesno("Write LoRX Delay",question):
+                print "Saving LoRX-only delay update to SQL and ACC (Ant A only)."
+                self.print_save_delays(delays, -xydelays, active_idx=[15])
                 # All Y-X delays need a sign flip, hence the minus sign
                 # ************ This block commented out due to loss of SQL **************
                 ch.dla_update2sql(delays,-xydelays,lorx=True)
