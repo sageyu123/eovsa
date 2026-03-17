@@ -53,3 +53,9 @@ ovsa_site/*
 .vscode/*
 
 *.test.py
+
+
+# tmp file from eovsa_cat
+geo.txt
+gps.txt
+ob3.txt

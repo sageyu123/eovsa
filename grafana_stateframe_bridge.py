@@ -1,18 +1,15 @@
 #!/usr/bin/env python
 """
-Expose a small subset of the live stateframe as JSON so Grafana (via the JSON API
-data source or any other HTTP client) can poll it.  The bridge reuses the existing
-stateframe utilities that power sf_display, so it does not change any control logic.
+Expose a small subset of the live stateframe for Prometheus scraping and ad hoc
+JSON inspection. The bridge reuses the existing stateframe utilities that power
+sf_display, so it does not change any control logic.
 
 Example:
     $ python grafana_stateframe_bridge.py --port 9105 --poll-interval 2
 
-Once running, point Grafana's JSON API data source at:
-    http://<host>:9105/stateframe
-and configure panels to consume the returned fields.
+Once running, point Prometheus at:
+    http://<host>:9105/metrics
 """
-
-from __future__ import print_function
 
 import argparse
 import copy
@@ -23,8 +20,6 @@ import re
 import sys
 import threading
 import time
-from collections import deque
-import math
 
 import numpy as np
 
@@ -53,19 +48,6 @@ def _lv_to_unix_ms(lv_timestamp):
         return None
 
 
-def _assign_metric(metrics, name, value):
-    """Record numeric/boolean metrics, skipping values that are None."""
-    if value is None:
-        return
-    if isinstance(value, bool):
-        metrics[name] = 1 if value else 0
-        return
-    try:
-        metrics[name] = float(value)
-    except Exception:
-        pass
-
-
 def _finite_or_none(value):
     """Return a finite float for scalars/length-1 arrays; otherwise None."""
     try:
@@ -76,36 +58,6 @@ def _finite_or_none(value):
         return val if np.isfinite(val) else None
     except Exception:
         return None
-
-
-def _parse_time_string(value, default=None):
-    """Return Unix ms from ISO8601 strings, numeric timestamps, or 'now-<offset>' expressions."""
-    if value is None:
-        return default
-    if isinstance(value, (int, float)):
-        return int(float(value))
-    if isinstance(value, string_types):
-        token = value.strip()
-        if not token:
-            return default
-        if token == 'now':
-            return int(Time.now().unix * 1000.0)
-        if token.startswith('now-'):
-            try:
-                magnitude = float(token[4:-1])
-                unit = token[-1]
-                multiplier = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}.get(unit)
-                if multiplier is None:
-                    return default
-                seconds = magnitude * multiplier
-                return int((Time.now().unix - seconds) * 1000.0)
-            except Exception:
-                return default
-        try:
-            return int(Time(token).unix * 1000.0)
-        except Exception:
-            return default
-    return default
 
 
 def _safe_time(lv_timestamp):
@@ -376,62 +328,30 @@ class FlareMonitorReader(object):
 
 
 class StateframeSampler(object):
-    """Continuously samples the ACC stateframe and keeps the latest and historical payloads."""
+    """Continuously sample the ACC stateframe and keep the latest payload."""
 
-    def __init__(self, poll_interval=1.0, antlist=None, history_seconds=3600, history_max_points=1800):
+    def __init__(self, poll_interval=1.0, antlist=None):
         self.accini = stf.rd_ACCfile(host='ovsa')
         self.sf = self.accini['sf']
         if antlist is None:
             antlist = range(16)
         self.antlist = antlist
         self.poll_interval = poll_interval
-        self.history_seconds = history_seconds
-        self.history_max_points = history_max_points
         self._lock = threading.Lock()
         self._latest = {'error': 'Sampler not started'}
-        self._history = deque(maxlen=history_max_points if history_max_points else None)
-        self._metric_names = set()
         self.flare_reader = FlareMonitorReader()
         self._thread = threading.Thread(target=self._loop)
         self._thread.daemon = True
         self._thread.start()
 
-    @property
-    def history_window_ms(self):
-        return int(self.history_seconds * 1000.0)
-
     def latest(self):
         with self._lock:
             return copy.deepcopy(self._latest)
-
-    def metric_names(self):
-        with self._lock:
-            return sorted(self._metric_names)
 
     def prometheus_payload(self):
         """Return a copy of the latest payload for Prometheus rendering."""
         with self._lock:
             return copy.deepcopy(self._latest)
-
-    def history_series(self, metrics, start_ms=None, end_ms=None):
-        with self._lock:
-            samples = list(self._history)
-        result = {metric: [] for metric in metrics}
-        for sample in samples:
-            ts_ms = sample.get('timestamp_ms')
-            if ts_ms is None:
-                continue
-            if start_ms is not None and ts_ms < start_ms:
-                continue
-            if end_ms is not None and ts_ms > end_ms:
-                continue
-            metric_values = sample.get('metrics', {})
-            for metric in metrics:
-                value = metric_values.get(metric)
-                if value is None:
-                    continue
-                result[metric].append((value, ts_ms))
-        return result
 
     def _loop(self):
         while True:
@@ -445,11 +365,6 @@ class StateframeSampler(object):
                 }
             with self._lock:
                 self._latest = payload
-                if payload.get('error') is None:
-                    entry = self._prepare_history_entry(payload)
-                    if entry is not None:
-                        self._history.append(entry)
-                        self._metric_names.update(entry['metrics'].keys())
             time.sleep(self.poll_interval)
 
     def _build_payload(self, data):
@@ -481,68 +396,6 @@ class StateframeSampler(object):
         payload['flare_monitor'] = self.flare_reader.latest()
         payload['error'] = None
         return payload
-
-    def _prepare_history_entry(self, payload):
-        timestamp_ms = payload.get('stateframe_time_unix_ms')
-        if timestamp_ms is None:
-            timestamp_ms = int(Time.now().unix * 1000.0)
-        metrics = self._flatten_metrics(payload)
-        return {
-            'timestamp_ms': timestamp_ms,
-            'metrics': metrics
-        }
-
-    def _flatten_metrics(self, payload):
-        metrics = {}
-        _assign_metric(metrics, 'stateframe.timestamp_ms', payload.get('stateframe_time_unix_ms'))
-        _assign_metric(metrics, 'schedule.timestamp_ms', payload.get('schedule_time_unix_ms'))
-
-        weather = payload.get('weather') or {}
-        _assign_metric(metrics, 'weather.wind_mph', weather.get('wind_mph'))
-        _assign_metric(metrics, 'weather.avg_wind_mph', weather.get('avg_wind_mph'))
-        _assign_metric(metrics, 'weather.wind_direction_deg', weather.get('wind_direction_deg'))
-        _assign_metric(metrics, 'weather.temperature_f', weather.get('temperature_f'))
-        _assign_metric(metrics, 'weather.pressure_mbar', weather.get('pressure_mbar'))
-
-        roach = payload.get('roach') or {}
-        _assign_metric(metrics, 'control_room.temperature_f', roach.get('control_room_temp_f'))
-
-        for entry in payload.get('solar_power', []):
-            suffix = 'array{:02d}'.format(entry.get('array'))
-            _assign_metric(metrics, 'solar.{}.charge_pct'.format(suffix), entry.get('charge_pct'))
-            _assign_metric(metrics, 'solar.{}.voltage_v'.format(suffix), entry.get('voltage_v'))
-            _assign_metric(metrics, 'solar.{}.current_a'.format(suffix), entry.get('current_a'))
-            _assign_metric(metrics, 'solar.{}.age_seconds'.format(suffix), entry.get('age_seconds'))
-
-        for antenna in payload.get('antennas', []):
-            prefix = 'antenna.{:02d}'.format(antenna.get('id'))
-            _assign_metric(metrics, '{}.az_actual_deg'.format(prefix), antenna.get('az_actual_deg'))
-            _assign_metric(metrics, '{}.az_requested_deg'.format(prefix), antenna.get('az_requested_deg'))
-            _assign_metric(metrics, '{}.el_actual_deg'.format(prefix), antenna.get('el_actual_deg'))
-            _assign_metric(metrics, '{}.el_requested_deg'.format(prefix), antenna.get('el_requested_deg'))
-            _assign_metric(metrics, '{}.delta_az_deg'.format(prefix), antenna.get('delta_az_deg'))
-            _assign_metric(metrics, '{}.delta_el_deg'.format(prefix), antenna.get('delta_el_deg'))
-            _assign_metric(metrics, '{}.parallactic_angle_deg'.format(prefix), antenna.get('parallactic_angle_deg'))
-            _assign_metric(metrics, '{}.tracking'.format(prefix), antenna.get('tracking'))
-            _assign_metric(metrics, '{}.track_source'.format(prefix), antenna.get('track_source'))
-            _assign_metric(metrics, '{}.fe.hpol_power_dbm'.format(prefix), antenna.get('fe_hpol_power_dbm'))
-            _assign_metric(metrics, '{}.fe.vpol_power_dbm'.format(prefix), antenna.get('fe_vpol_power_dbm'))
-            _assign_metric(metrics, '{}.be.hpol_voltage_v'.format(prefix), antenna.get('be_hpol_voltage_v'))
-            _assign_metric(metrics, '{}.be.vpol_voltage_v'.format(prefix), antenna.get('be_vpol_voltage_v'))
-
-        flare = payload.get('flare_monitor') or {}
-        detectors = flare.get('detectors') or []
-        _assign_metric(metrics, 'flare.timestamp_ms', flare.get('timestamp_unix_ms'))
-        _assign_metric(metrics, 'flare.flag_active', flare.get('flag_active'))
-        _assign_metric(metrics, 'flare.mean', flare.get('mean'))
-        _assign_metric(metrics, 'flare.sigma', flare.get('sigma'))
-        _assign_metric(metrics, 'flare.threshold', flare.get('threshold'))
-        _assign_metric(metrics, 'flare.count', flare.get('count'))
-        _assign_metric(metrics, 'flare.age_seconds', flare.get('age_seconds'))
-        for idx, value in enumerate(detectors, 1):
-            _assign_metric(metrics, 'flare.detector{:d}'.format(idx), value)
-
-        return metrics
 
     def _weather_block(self, data):
         weather = self.sf['Schedule']['Data']['Weather']
@@ -598,6 +451,15 @@ class StateframeSampler(object):
             # If both axes are parked at zero, treat the antenna as not tracking.
             if abs(az_actual) < 1e-6 and abs(el_actual) < 1e-6:
                 tracking = False
+            c = self.sf['Antenna'][ant]['Controller']
+            try:
+                ra_requested = _finite_or_none(stf.extract(data, c['RAVirtualAxis']) / 10000.0)
+            except Exception:
+                ra_requested = None
+            try:
+                dec_requested = _finite_or_none(stf.extract(data, c['DecVirtualAxis']) / 10000.0)
+            except Exception:
+                dec_requested = None
             fe = self.sf['Antenna'][ant]['Frontend']['FEM']
             try:
                 fe_h_power = _finite_or_none(stf.extract(data, fe['HPol']['Power']))
@@ -620,6 +482,8 @@ class StateframeSampler(object):
                 'id': ant + 1,
                 'az_actual_deg': az_actual,
                 'az_requested_deg': float(stats['RequestedAzimuth'][idx]),
+                'ra_requested_deg': ra_requested,
+                'dec_requested_deg': dec_requested,
                 'el_actual_deg': el_actual,
                 'el_requested_deg': float(stats['RequestedElevation'][idx]),
                 'delta_az_deg': float(stats['dAzimuth'][idx]),
@@ -639,7 +503,7 @@ SAMPLER = None
 
 
 class GrafanaRequestHandler(BaseHTTPRequestHandler):
-    """Minimal HTTP handler providing /stateframe and /healthz endpoints."""
+    """Minimal HTTP handler providing latest payload, health, and Prometheus metrics."""
 
     def log_message(self, fmt, *args):
         # Silence default logging noise.
@@ -680,54 +544,6 @@ class GrafanaRequestHandler(BaseHTTPRequestHandler):
             self._send_text(self._handle_metrics())
         else:
             self._send_json({'error': 'unknown endpoint'}, status=404)
-
-    def do_POST(self):
-        length = int(self.headers.get('Content-Length') or 0)
-        try:
-            body = self.rfile.read(length) if length else b''
-        except Exception:
-            self._send_json({'error': 'unable to read request body'}, status=400)
-            return
-        try:
-            payload = json.loads(body or '{}')
-        except Exception:
-            self._send_json({'error': 'invalid JSON body'}, status=400)
-            return
-
-        if self.path == '/search':
-            metrics = SAMPLER.metric_names()
-            self._send_json(metrics)
-            return
-
-        if self.path == '/query':
-            response = self._handle_query(payload)
-            self._send_json(response)
-            return
-
-        self._send_json({'error': 'unknown endpoint'}, status=404)
-
-    def _handle_query(self, payload):
-        now_ms = int(Time.now().unix * 1000.0)
-        range_dict = payload.get('range') or {}
-        start_ms = _parse_time_string(range_dict.get('from'))
-        end_ms = _parse_time_string(range_dict.get('to')) or now_ms
-        if start_ms is None:
-            raw_from = (payload.get('rangeRaw') or {}).get('from')
-            start_ms = _parse_time_string(raw_from, default=end_ms - SAMPLER.history_window_ms)
-        metrics = []
-        for target in payload.get('targets') or []:
-            if isinstance(target, dict):
-                name = target.get('target') or target.get('refId')
-            else:
-                name = target
-            if name:
-                metrics.append(name)
-        series = SAMPLER.history_series(metrics, start_ms=start_ms, end_ms=end_ms)
-        result = []
-        for metric, points in series.items():
-            datapoints = [[value, ts] for value, ts in points]
-            result.append({'target': metric, 'datapoints': datapoints})
-        return result
 
     def _handle_metrics(self):
         payload = SAMPLER.prometheus_payload()
@@ -819,6 +635,8 @@ class GrafanaRequestHandler(BaseHTTPRequestHandler):
         antenna_metric_defs = [
             ('eovsa_antenna_az_actual_deg', 'az_actual_deg', 'Actual antenna azimuth in degrees.'),
             ('eovsa_antenna_az_requested_deg', 'az_requested_deg', 'Requested antenna azimuth in degrees.'),
+            ('eovsa_antenna_ra_requested_deg', 'ra_requested_deg', 'Requested antenna right ascension in degrees.'),
+            ('eovsa_antenna_dec_requested_deg', 'dec_requested_deg', 'Requested antenna declination in degrees.'),
             ('eovsa_antenna_el_actual_deg', 'el_actual_deg', 'Actual antenna elevation in degrees.'),
             ('eovsa_antenna_el_requested_deg', 'el_requested_deg', 'Requested antenna elevation in degrees.'),
             ('eovsa_antenna_delta_az_deg', 'delta_az_deg', 'Requested minus actual azimuth in degrees.'),
@@ -889,24 +707,18 @@ def _parse_antennas(arg):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Expose stateframe snippets for Grafana.')
+    parser = argparse.ArgumentParser(description='Expose stateframe snippets for Prometheus.')
     parser.add_argument('--port', type=int, default=9105, help='HTTP port to listen on (default: 9105)')
     parser.add_argument('--poll-interval', type=float, default=30.0,
                         help='Seconds between ACC polls (default: 30)')
     parser.add_argument('--antennas', default='', help='Comma-separated antenna IDs (1-16) to publish')
-    parser.add_argument('--history-seconds', type=float, default=86400,
-                        help='Approximate number of seconds of samples to keep in memory (default: 86400)')
-    parser.add_argument('--history-max-points', type=int, default=8640,
-                        help='Maximum number of samples to keep (default: 8640)')
     args = parser.parse_args()
 
     antlist = _parse_antennas(args.antennas)
     global SAMPLER
     SAMPLER = StateframeSampler(
         poll_interval=args.poll_interval,
-        antlist=antlist,
-        history_seconds=args.history_seconds,
-        history_max_points=args.history_max_points)
+        antlist=antlist)
 
     server = HTTPServer(('', args.port), GrafanaRequestHandler)
     print('Grafana bridge listening on port {}'.format(args.port))
