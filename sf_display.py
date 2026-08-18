@@ -137,6 +137,7 @@ import struct
 import copy
 import numpy as np
 import stateframe as stf
+from attn_power_model import replace_power_if_needed
 from util import *
 from collections import deque
 from math import fmod, pi
@@ -1482,14 +1483,32 @@ class App():
                 hpv = stf.extract(data,fe['HPol']['Power'])
                 vpv = stf.extract(data,fe['VPol']['Power'])
                 ndon = ' '
-                if stf.extract(data,fe['ND']) == 1:
+                nd_val = stf.extract(data,fe['ND'])
+                if nd_val == 1:
                     ndon = '**ND-ON**'
+                h_attn1 = stf.extract(data,fe['HPol']['Attenuation']['First'])
+                h_attn2 = stf.extract(data,fe['HPol']['Attenuation']['Second'])
+                v_attn1 = stf.extract(data,fe['VPol']['Attenuation']['First'])
+                v_attn2 = stf.extract(data,fe['VPol']['Attenuation']['Second'])
+                h_volt = stf.extract(data,fe['HPol']['Voltage'])
+                v_volt = stf.extract(data,fe['VPol']['Voltage'])
+
+                # Replace power only for antenna index 14 (Ant 15), otherwise pass through.
+                if i == 14:
+                    hpv_val, h_replaced = replace_power_if_needed(hpv, h_attn1, h_attn2, 'H', nd_val, 1.105, env='lab', measured_voltage=h_volt)
+                    vpv_val, v_replaced = replace_power_if_needed(vpv, v_attn1, v_attn2, 'V', nd_val, 1.105, env='lab', measured_voltage=v_volt)
+                else:
+                    hpv_val, h_replaced = hpv, False
+                    vpv_val, v_replaced = vpv, False
+
+                hpv_mark = '*' if h_replaced else ' '
+                vpv_mark = '*' if v_replaced else ' '
+
                 be = sf['DCM'][i]
-                line = '{:2d}  {:>9}  {:7.4f} {:3d} {:3d} {:7.4f} {:3d} {:3d}            {:7.4f} {:5d}   {:7.4f} {:5d}'.format(i+1,ndon,
-                    hpv,stf.extract(data,fe['HPol']['Attenuation']['First']),
-                    stf.extract(data,fe['HPol']['Attenuation']['Second']),
-                    vpv,stf.extract(data,fe['VPol']['Attenuation']['First']),
-                    stf.extract(data,fe['VPol']['Attenuation']['Second']),
+                line = '{:2d}  {:>9}  {:7.4f}{} {:3d} {:3d} {:7.4f}{} {:3d} {:3d}            {:7.4f} {:5d}   {:7.4f} {:5d}'.format(
+                    i+1, ndon,
+                    hpv_val, hpv_mark, h_attn1, h_attn2,
+                    vpv_val, vpv_mark, v_attn1, v_attn2,
                     stf.extract(data,be['HPol']['Voltage']),stf.extract(data,be['HPol']['Attenuation']),
                     stf.extract(data,be['VPol']['Voltage']),stf.extract(data,be['VPol']['Attenuation']))
                 self.L3.insert(END,line)
