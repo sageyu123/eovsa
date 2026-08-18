@@ -13,6 +13,10 @@
 #   2016-03-01  JV
 #     Corrected typo in run() so that "RX-SELECT HI" should now work
 #     and "RX-SELECT" with incorrect args should not crash program
+#   2026-03-21  SY
+#     Hardened RX-SELECT by verifying PDU outlet state and GeoBrick
+#     SELECTEDRX readback, with bounded polling/retry before logging
+#     failure.
 #
 
 import datetime
@@ -34,6 +38,9 @@ HOST_PORT = 5676
 ACC_HOSTNAME = 'acc.solar.pvt'
 ACC_PORT = 5675
 VERSION = 1.2  # Version date: 10/6/2015
+RX_SELECT_RETRY_COUNT = 3
+RX_SELECT_SETTLE_TIME = 0.25
+RX_SELECT_VERIFY_TIMEOUT = 2.0
 
 
 # region Class Description
@@ -230,6 +237,80 @@ class ServerDaemon():
         finally:
             threading.Timer(0.3, self.send_stateframe_dict).start()
 
+    def __rx_select_readback(self):
+        outlet_status = None
+        selected_rx = None
+
+        worker = self.workers.get('PDU-Worker', None)
+        if worker is not None:
+            try:
+                outlet_status = worker.stateframe_query()['STATUS'][0]
+            except Exception, e:
+                self.__log('RX-SELECT could not read PDU outlet state.')
+                self.__log(traceback.format_exc())
+
+        worker = self.workers.get('GeoBrick-Worker', None)
+        if worker is not None:
+            try:
+                selected_rx = worker.stateframe_query()['SELECTEDRX']
+            except Exception, e:
+                self.__log('RX-SELECT could not read GeoBrick selected RX.')
+                self.__log(traceback.format_exc())
+
+        return outlet_status, selected_rx
+
+    def __rx_select_verified(self, band):
+        expected_outlet = {'LO': 0, 'HI': 1}[band]
+        expected_rx = {'LO': 1, 'HI': 2}[band]
+        timeout = time.time() + RX_SELECT_VERIFY_TIMEOUT
+        outlet_status, selected_rx = self.__rx_select_readback()
+
+        while time.time() < timeout:
+            if outlet_status == expected_outlet and selected_rx == expected_rx:
+                return True, outlet_status, selected_rx
+            time.sleep(RX_SELECT_SETTLE_TIME)
+            outlet_status, selected_rx = self.__rx_select_readback()
+
+        return outlet_status == expected_outlet and selected_rx == expected_rx, \
+               outlet_status, selected_rx
+
+    def __execute_rx_select(self, band):
+        outlet_map = {'LO': 'OFF', 'HI': 'ON'}
+        outlet_command = ['OUTLET', '1', outlet_map[band]]
+        brick_command = ['FRM-RX-SEL', band]
+        expected_outlet = {'LO': 0, 'HI': 1}[band]
+        expected_rx = {'LO': 1, 'HI': 2}[band]
+
+        for attempt in range(RX_SELECT_RETRY_COUNT):
+            self.__log('RX-SELECT ' + band + ' attempt ' +
+                       str(attempt + 1) + '/' +
+                       str(RX_SELECT_RETRY_COUNT) + '.')
+            self.__log('Attempted to send new command: ' +
+                       outlet_command[0] + '.')
+            worker = self.function_map[outlet_command[0]]
+            worker.execute(outlet_command)
+            time.sleep(RX_SELECT_SETTLE_TIME)
+
+            self.__log('Attempted to send new command: ' +
+                       brick_command[0] + '.')
+            worker = self.function_map[brick_command[0]]
+            worker.execute(brick_command)
+            time.sleep(RX_SELECT_SETTLE_TIME)
+
+            verified, outlet_status, selected_rx = self.__rx_select_verified(band)
+            if verified:
+                self.__log('RX-SELECT ' + band +
+                           ' verified from worker readback.')
+                return True
+
+            self.__log('RX-SELECT ' + band +
+                       ' mismatch after verification window. ' +
+                       'Expected outlet 1=' + str(expected_outlet) +
+                       ', SELECTEDRX=' + str(expected_rx) +
+                       '; saw outlet 1=' + str(outlet_status) +
+                       ', SELECTEDRX=' + str(selected_rx) + '.')
+        return False
+
 
     # region Method Description
     """
@@ -279,20 +360,12 @@ class ServerDaemon():
                     #   RX-SELECT LO => OUTLET 1 OFF and FRM-RX-SEL LO
                     #   RX-SELECT HI => OUTLET 1 ON  and FRM-RX-SEL HI
                     band = acc_command[1].upper()
-                    outlet_map = {'LO':'OFF','HI':'ON'}
                     if band == 'LO' or band == 'HI':
-                        outlet_command = ['OUTLET','1',outlet_map[band]]
-                        brick_command = ['FRM-RX-SEL',band]
-                        self.__log('Attempted to send new command: ' +
-                                    outlet_command[0] + '.')
-                        worker = self.function_map[outlet_command[0]]
-                        worker.execute(outlet_command)
-                        time.sleep(0.1)  #Try giving a little time before the next command
-                        
-                        self.__log('Attempted to send new command: ' +
-                                    brick_command[0] + '.')
-                        worker = self.function_map[brick_command[0]]
-                        worker.execute(brick_command)
+                        if not self.__execute_rx_select(band):
+                            self.__log('RX-SELECT ' + band +
+                                       ' failed verification after ' +
+                                       str(RX_SELECT_RETRY_COUNT) +
+                                       ' attempts.')
                     else:
                         # If acc_command[1] is not LO or HI, print error message to log
                         self.__log('Command ' + acc_command[0] + ' not executed - requires argument LO or HI')  

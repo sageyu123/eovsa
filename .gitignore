@@ -48,9 +48,8 @@ __pycache__/
 .settings/
 *.swp
 
-ovsa_site/*
 
-.vscode/*
+.vscode/
 
 *.test.py
 
@@ -59,3 +58,4 @@ ovsa_site/*
 geo.txt
 gps.txt
 ob3.txt
+scripts/deploy_eovsa_to_pipeline.sh

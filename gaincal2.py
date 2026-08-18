@@ -508,6 +508,9 @@ def apply_fem_level(data, skycal={}, gctime=None):
                 ch.fem_attn_val2sql([attn])   # Go ahead and write it to SQL
     except:
         attn = ac.get_attncal(gctime)[0]   # Attn measured by GAINCALTEST (returns a list, but use first, generally only, one)
+    if attn == {} or 'fghz' not in attn or 'attn' not in attn:
+        print 'APPLY_FEM_LEVEL: No valid attenuation calibration for', gctime.iso, '- no FEM level correction applied.'
+        return cdata
     antgain = np.zeros((nant,2,nf,nt),np.float32)   # Antenna-based gains [dB] vs. frequency
     # Find common frequencies of attn with data
     idx1, idx2 = common_val_idx(data['fghz'],attn['fghz'],precision=4)

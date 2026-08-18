@@ -12,15 +12,153 @@
 #   2016-Jan-27  DG
 #     In an attempt to make ant_toggle() more reliable, it tries to login
 #     three times before each of the two toggle commands.
+#   2026-Jul-20  SY
+#     Added state-aware read-toggle-verify control for frontend power.
 
 import requests
 from requests.auth import HTTPDigestAuth
 import telnetlib, time
 import Queue
+import threading
+import xml.etree.ElementTree as ET
 
 q = Queue.Queue()
+_power_locks = {}
+_power_locks_guard = threading.Lock()
+_request_timeout = 5
+
+def _get_power_lock(antnum):
+    '''Return the process-local lock for one Viking antenna controller.'''
+    with _power_locks_guard:
+        if antnum not in _power_locks:
+            _power_locks[antnum] = threading.Lock()
+        return _power_locks[antnum]
+
+def _get_relay_state(antnum, relay):
+    '''Read and return a Viking electrical relay state as 0 or 1.'''
+    url = 'http://vik%d.solar.pvt/protect/status.xml' % antnum
+    response = requests.get(url, auth=HTTPDigestAuth('admin','pwr4me'),
+                            timeout=_request_timeout)
+    try:
+        if response.status_code != 200:
+            raise IOError('HTTP status %s from %s' %
+                          (response.status_code, url))
+        value = ET.fromstring(response.content).findtext('.//rly%d' % relay)
+    finally:
+        response.close()
+    if value is None or value.strip() not in ('0', '1'):
+        raise ValueError('Invalid relay %d state: %r' % (relay, value))
+    return int(value)
+
+def _toggle_relay(antnum, relay):
+    '''Issue exactly one toggle request to a Viking electrical relay.'''
+    url = ('http://vik%d.solar.pvt/protect/'
+           'relays.cgi?relay=%d&state=toggle' % (antnum, relay))
+    response = requests.get(url, auth=HTTPDigestAuth('admin','pwr4me'),
+                            timeout=_request_timeout)
+    try:
+        if response.status_code != 200:
+            raise IOError('HTTP status %s from %s' %
+                          (response.status_code, url))
+    finally:
+        response.close()
+
+def ant_set_power(antnum, device='fem', power_on=True):
+    '''Ensure that an antenna frontend is in the requested power state.
+
+    :param antnum: Antenna number whose Viking relay controller is used.
+    :type antnum: int
+    :param device: ``fem`` or ``frontend`` (relay 2).
+    :type device: str
+    :param power_on: A Boolean specifying the requested FEM device state.
+    :type power_on: bool
+    :returns: ``True`` only when the requested state is verified.
+    :rtype: bool
+
+    Relay 2 uses the normally-closed contact, so the electrical relay state
+    reported by the Viking controller is the inverse of FEM device power.
+    The controller only offers a toggle operation; this routine therefore
+    holds a lock across a read, at most one toggle, and a verification read.
+    It never retries an ambiguous toggle.
+    '''
+    if not isinstance(power_on, bool):
+        q.put('Ant%d FEM power error: requested state must be Boolean' % antnum)
+        return False
+    try:
+        device_name = device.upper()
+    except AttributeError:
+        device_name = ''
+    if device_name not in ('FEM', 'FRONTEND'):
+        q.put('Ant%d power error: unsupported device %s' %
+              (antnum, str(device)))
+        return False
+
+    # Normally-closed wiring inversion:
+    # relay OFF (0) means FEM ON; relay ON (1) means FEM OFF.
+    target_relay_state = 0 if power_on else 1
+    requested_state = 'ON' if power_on else 'OFF'
+
+    with _get_power_lock(antnum):
+        try:
+            relay_state = _get_relay_state(antnum, 2)
+        except Exception as err:
+            q.put('Ant%d FEM power %s failed: cannot read Frontend relay 2: %s' %
+                  (antnum, requested_state, str(err)))
+            return False
+
+        if relay_state == target_relay_state:
+            q.put('Ant%d FEM power already %s (Frontend relay 2 is %s)' %
+                  (antnum, requested_state,
+                   'OFF' if relay_state == 0 else 'ON'))
+            return True
+
+        toggle_error = None
+        try:
+            _toggle_relay(antnum, 2)
+        except Exception as err:
+            # The request may have reached the controller before its response
+            # failed.  Verify once, but never issue a second blind toggle.
+            toggle_error = err
+            q.put('Ant%d FEM power %s toggle response failed; verifying state: %s' %
+                  (antnum, requested_state, str(err)))
+        time.sleep(0.5)
+        try:
+            relay_state = _get_relay_state(antnum, 2)
+        except Exception as err:
+            q.put('Ant%d FEM power %s failed: cannot verify Frontend relay 2: %s' %
+                  (antnum, requested_state, str(err)))
+            return False
+
+        if relay_state == target_relay_state:
+            suffix = ' after an ambiguous toggle response' if toggle_error else ''
+            q.put('Ant%d FEM power verified %s (Frontend relay 2 is %s)%s' %
+                  (antnum, requested_state,
+                   'OFF' if relay_state == 0 else 'ON', suffix))
+            return True
+
+        q.put('Ant%d FEM power %s failed verification: Frontend relay 2 is %s' %
+              (antnum, requested_state,
+               'OFF' if relay_state == 0 else 'ON'))
+        return False
 
 def ant_toggle(antnum, device=None, wait=None, cycle=True):
+    '''Run a legacy Viking power cycle without interleaving a power-set call.
+
+    :param antnum: Antenna number whose Viking relay controller is used.
+    :type antnum: int
+    :param device: Device name, or ``None`` for the antenna controller.
+    :type device: str or None
+    :param wait: Seconds to leave the device off; defaults to 15.
+    :type wait: int or None
+    :param cycle: Restore device power after the first toggle when ``True``.
+    :type cycle: bool
+    :returns: ``None``; status messages are written to :data:`q`.
+    :rtype: None
+    '''
+    with _get_power_lock(antnum):
+        return _ant_toggle(antnum, device, wait, cycle)
+
+def _ant_toggle(antnum, device=None, wait=None, cycle=True):
     ''' Toggles power to one of the devices attached to the Viking Relay switch
         in each antenna controller box.  If cycle=True, then end state is ALWAYS
         for the device to be turned ON (relay turned OFF).
@@ -203,4 +341,3 @@ if __name__ == "__main__":
         host = sys.argv[1]
         port = sys.argv[2]
     pwr_cycle(host,port)
-

@@ -58,6 +58,8 @@
 #    shadowing by Black Mt.
 #  2024-05-30  DG
 #    Change end STOW line to REWIND.
+#  2026-07-20  SY
+#    Add Ant 13 FEM power events to automatically generated solar schedules.
 #
 
 import os
@@ -313,26 +315,80 @@ def plot_sun(sun):
     ax.set_xlabel('Time [in fraction of a day]')
     return ax
 
-def make_sched(sun=None, t=None, ax=None, verbose=False):
-    ''' Main routine to create a daily schedule, given at date as a Time() object.
-        If called with no arguments, a schedule for the current day is returned.
-        Optional arguments:
-           sun    A "sun" dictionary returned by sunup(), with the restriction
-                    that the daterange used in the sunup() call must contain
-                    the date in t.  This is a time-saving measure in case many 
-                    schedules are being generated for a given year, since the 
-                    internal call to sunup() is skipped.  If omitted, sunup() is
-                    called for the given date.
-           t      A Time() object giving the date for which the schedule is
-                    desired.  If omitted, the current date is used.
-           ax     An axis object for an existing plot.  This is mainly a debugging
-                    tool.  If ax = plot_sun() is called, then make_sched(ax=ax) 
-                    will cause blue lines to be overplotted for the given date, 
-                    showing the time ranges chosen for the calibrators.
-          verbose If True, will also print the schedule lines to the screen.
-          
-        Returns:
-          lines   A list of text lines representing the schedule.
+
+def add_ant13_fem_power_events(lines):
+    '''Add idempotent Ant 13 FEM power events to a standard solar schedule.
+
+    :param lines: Schedule lines containing an end-of-day ``REWIND``.
+    :type lines: list(str)
+    :returns: A new list with ``FEMPOWERON`` five minutes before the first
+              ``ACQUIRE`` (or first remaining event) and ``FEMPOWEROFF`` one
+              minute before ``REWIND``.
+    :rtype: list(str)
+
+    The helper is used only by the automatic solar-schedule path.  Custom and
+    overnight schedules are not decorated.  Existing power events are removed
+    first so repeated calls do not duplicate them.
+    '''
+    clean_lines = []
+    for line in lines:
+        tokens = line[20:].split()
+        command = tokens[0].upper() if tokens else ''
+        if command not in ('FEMPOWERON', 'FEMPOWEROFF'):
+            clean_lines.append(line)
+
+    acquire_idx = None
+    rewind_idx = None
+    for i, line in enumerate(clean_lines):
+        tokens = line[20:].split()
+        command = tokens[0].upper() if tokens else ''
+        if acquire_idx is None and command == 'ACQUIRE':
+            acquire_idx = i
+        if command == 'REWIND':
+            rewind_idx = i
+    if acquire_idx is None:
+        for i, line in enumerate(clean_lines):
+            tokens = line[20:].split()
+            command = tokens[0].upper() if tokens else ''
+            if command and command != 'REWIND':
+                acquire_idx = i
+                break
+    if acquire_idx is None or rewind_idx is None:
+        return clean_lines
+
+    power_on_mjd = Time(clean_lines[acquire_idx][:19]).mjd - 5./1440.
+    power_off_mjd = Time(clean_lines[rewind_idx][:19]).mjd - 1./1440.
+    power_on_line = (Time(power_on_mjd, format='mjd').iso[:19] +
+                     ' FEMPOWERON')
+    power_off_line = (Time(power_off_mjd, format='mjd').iso[:19] +
+                      ' FEMPOWEROFF')
+
+    powered_lines = list(clean_lines)
+    powered_lines.insert(acquire_idx, power_on_line)
+    if acquire_idx <= rewind_idx:
+        rewind_idx += 1
+    powered_lines.insert(rewind_idx, power_off_line)
+    return powered_lines
+
+def make_sched(sun=None, t=None, ax=None, verbose=False,
+               ant13_fem_power=False):
+    '''Create a daily solar schedule for a specified date.
+
+    :param sun: A dictionary returned by :func:`sunup` whose date range
+                contains ``t``.  When omitted, it is calculated internally.
+    :type sun: dict or None
+    :param t: Date for the schedule; defaults to the current date.
+    :type t: astropy.time.Time or None
+    :param ax: Optional plot axis on which to show calibrator ranges.
+    :type ax: matplotlib.axes.Axes or None
+    :param verbose: Print generated schedule lines when ``True``.
+    :type verbose: bool
+    :param ant13_fem_power: Decorate the schedule with Ant 13 FEM power
+                            events.  This defaults to ``False`` so other
+                            callers do not acquire shared hardware ownership.
+    :type ant13_fem_power: bool
+    :returns: Text lines representing the generated schedule.
+    :rtype: list(str)
     '''
     # From give time, get mjd0 = MJD of Jan 1 for that year
     if t is None:
@@ -540,17 +596,20 @@ def make_sched(sun=None, t=None, ax=None, verbose=False):
     lines.append('{:} {:} {:} {:}'.format(Time(imjd + rc2start + 4./1440.,format='mjd').iso[:19],'PHASECAL_LO',calnames[refcal2],'pcal_lo.fsq'))
     lines.append('{:} {:}'.format(Time(imjd + rc2start + 24./1440.,format='mjd').iso[:19],'HISELECT'))
     lines.append('{:} {:} {:} {:}'.format(Time(imjd + rc2start + 25./1440.,format='mjd').iso[:19],'PHASECAL',calnames[refcal2],'pcal_hi-all.fsq'))
-    lines.append('{:} {:}'.format(Time(imjd + rc2start + 85./1440.,format='mjd').iso[:19],'REWIND'))
+    rewind_offset = 86. if ant13_fem_power else 85.
+    lines.append('{:} {:}'.format(Time(imjd + rc2start + rewind_offset/1440.,format='mjd').iso[:19],'REWIND'))
     if verbose:
         print Time(imjd + rc2start,format='mjd').iso[:19],'ACQUIRE',calnames[refcal2]
         print Time(imjd + rc2start + 1./1440.,format='mjd').iso[:19],'LOSELECT'
         print Time(imjd + rc2start + 4./1440.,format='mjd').iso[:19],'PHASECAL_LO',calnames[refcal2],'pcal_lo.fsq'
         print Time(imjd + rc2start + 24./1440.,format='mjd').iso[:19],'HISELECT'
         print Time(imjd + rc2start + 25./1440.,format='mjd').iso[:19],'PHASECAL',calnames[refcal2],'pcal_hi-all.fsq'
-        print Time(imjd + rc2start + 85./1440.,format='mjd').iso[:19],'REWIND'
+        print Time(imjd + rc2start + rewind_offset/1440.,format='mjd').iso[:19],'REWIND'
     if ax:
         ax.plot([rc2start,rc2start+refdur/1440.],[imjd,imjd],color='C0',alpha=0.25)
     lines = chk_sched(lines)
+    if ant13_fem_power:
+        return add_ant13_fem_power_events(lines)
     return lines
 
 def chk_sched(lines):
@@ -577,11 +636,31 @@ def chk_sched(lines):
                 next = -1
     return lines
 
-def remove_cal(lines):
+def remove_cal(lines, ant13_fem_power=False):
+    '''Remove 27-m calibration blocks from a generated solar schedule.
+
+    :param lines: Input schedule lines.
+    :type lines: list(str)
+    :param ant13_fem_power: Rebuild Ant 13 FEM power events when ``True``.
+    :type ant13_fem_power: bool
+    :returns: Filtered schedule lines.
+    :rtype: list(str)
+    '''
     from util import Time
     keepidx = []
     sunidx = []
     rmidx = []
+    clean_lines = []
+    last_acquire = None
+    for line in lines:
+        tokens = line[20:].split()
+        command = tokens[0].upper() if tokens else ''
+        if command in ('FEMPOWERON', 'FEMPOWEROFF'):
+            continue
+        clean_lines.append(line)
+        if command == 'ACQUIRE':
+            last_acquire = line[:19]
+    lines = clean_lines
     # Keep all SUN lines and the line following. Also keep GAINSOLPNT lines;
     # these should remain even in "No 27m" mode.
     for i,line in enumerate(lines):
@@ -592,6 +671,8 @@ def remove_cal(lines):
             keepidx.append(i)
         if line.find('SKYCAL') > 0:
             keepidx.append(i-1)
+            keepidx.append(i)
+        if line.find('REWIND') > 0:
             keepidx.append(i)
     keepixd = np.array(keepidx)
     keeplines = np.array(lines)
@@ -610,15 +691,25 @@ def remove_cal(lines):
             rmidx.append(i+2)
     outlines = []
     for i,line in enumerate(keeplines):
-        if i in rmidx:
-            continue
         tokens = line[20:].split()
         if len(tokens) > 0:
             cmd = tokens[0].upper()
+        else:
+            cmd = ''
+        if i in rmidx:
+            continue
+        if len(tokens) > 0:
             if cmd == 'ACQUIRE' or cmd.startswith('PHASECAL'):
                 # "No 27m" mode: drop all refcal/phasecal blocks.
                 continue
         outlines.append(line)
-    outlines[-1] = outlines[-1][:19]+' REWIND'
+    if last_acquire:
+        rewind_delay = 1./1440. if ant13_fem_power else 0.
+        rewind_mjd = Time(last_acquire).mjd + rewind_delay
+        outlines[-1] = Time(rewind_mjd,format='mjd').iso[:19]+' REWIND'
+    else:
+        outlines[-1] = outlines[-1][:19]+' REWIND'
+    if ant13_fem_power:
+        return add_ant13_fem_power_events(outlines)
     return outlines
     

@@ -107,6 +107,8 @@
 import struct, sys
 import socket
 import urllib2
+import os
+import shutil
 import numpy as np
 from read_xml2 import xml_ptrs
 import copy
@@ -116,6 +118,20 @@ from tkFileDialog import *
 import xml.etree.ElementTree as ET
 import Queue
 q = Queue.Queue()
+
+RUNTIME_CACHE_DIR = '/common/python/runtime-cache'
+
+
+def _mirror_runtime_cache(filename):
+    '''Mirror a refreshed runtime support file into the shared /common cache.'''
+    try:
+        if not os.path.isfile(filename):
+            return
+        if not os.path.isdir(RUNTIME_CACHE_DIR):
+            os.makedirs(RUNTIME_CACHE_DIR)
+        shutil.copyfile(filename, os.path.join(RUNTIME_CACHE_DIR, os.path.basename(filename)))
+    except:
+        pass
 
 #============================
 def control_room_temp():
@@ -310,6 +326,7 @@ def rd_ACCfile(host = None):
                 # Lines already include trailing newlines.
                 o.write(line)
             o.close()
+            _mirror_runtime_cache('acc.ini')
             ACCfile.close()
             try:
                 ACCfile = urllib2.urlopen('ftp://'+userpass+'acc.solar.pvt/ni-rt/startup/acc.ini',timeout=0.5)

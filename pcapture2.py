@@ -669,6 +669,85 @@ def summary_plot(out,ant_str='ant1-15',ptype='phase'):
         ai = ant_list[i]
         ax[i,i].text(0.5,0.5,str(ai+1),ha='center',va='center',transform=ax[i,i].transAxes,fontsize=14)
 
+def plot_total_power(out, ant_str='ant1-15', pol=None, chran='0-4095',
+                     clip_pct=99.5):
+    '''Plot total-power amplitude images for selected antennas.
+
+        This is intended for quick packet-capture checks of whether one
+        antenna has low or missing signal.  The input should be the dictionary
+        returned by rd_jspec(), which has total power in out['p'] with shape
+        [16, 2, 4096, 50].  The plot axes are accumulation time and channel.
+
+        Arguments:
+            out       dictionary returned by rd_jspec()
+            ant_str   antenna list string, e.g. 'ant15' or 'ant1-15'
+            pol       polarization index to plot.  None plots both 0 and 1.
+            chran     channel range string, e.g. '0-4095' or '1000-4000'
+            clip_pct  percentile used for the common color-scale maximum.
+                      Set to None to use the true maximum.
+    '''
+    import matplotlib.pyplot as plt
+
+    if not isinstance(out, dict) or not out.has_key('p'):
+        print "out must be the dictionary returned by rd_jspec(), with key 'p'."
+        return
+    ant_list = ant_str2list(ant_str)
+    if ant_list is None or len(ant_list) == 0:
+        return
+    if ant_list.min() < 0 or ant_list.max() >= out['p'].shape[0]:
+        print 'antenna numbers must be in range 1-'+str(out['p'].shape[0])
+        return
+    if isinstance(chran, basestring):
+        ch1,ch2 = (int(s) for s in chran.split('-'))
+        if ch1 > ch2 or ch1 < 0 or ch2 > out['p'].shape[2]-1:
+            print 'start channel no must be less than end channel #'
+            print 'start and end channel must be >= 0 and <= '+str(out['p'].shape[2]-1)
+            print 'use the default range 0-'+str(out['p'].shape[2]-1)+' instead'
+            ch1 = 0
+            ch2 = out['p'].shape[2]-1
+    else:
+        print 'chran has to be a string'
+        return
+    if pol is None:
+        pol_list = range(out['p'].shape[1])
+    else:
+        pol_list = [pol]
+    if min(pol_list) < 0 or max(pol_list) >= out['p'].shape[1]:
+        print 'pol must be in range 0-'+str(out['p'].shape[1]-1)
+        return
+
+    pdata = out['p'][ant_list,:,:,:][:,pol_list,ch1:ch2+1,:]
+    if clip_pct is None:
+        vmax = pdata.max()
+    else:
+        vmax = np.percentile(pdata, clip_pct)
+    if vmax <= 0:
+        vmax = pdata.max()
+    if vmax <= 0:
+        vmax = None
+
+    nant = len(ant_list)
+    npol = len(pol_list)
+    nt = out['p'].shape[3]
+    xedge = np.arange(nt+1) - 0.5
+    yedge = np.arange(ch1,ch2+2) - 0.5
+    f, ax = plt.subplots(npol,nant,squeeze=False)
+    for j, pidx in enumerate(pol_list):
+        for i, antidx in enumerate(ant_list):
+            mesh = ax[j,i].pcolormesh(xedge, yedge,
+                                      out['p'][antidx,pidx,ch1:ch2+1,:],
+                                      vmin=0, vmax=vmax)
+            ax[j,i].set_xlim(-0.5,nt-0.5)
+            ax[j,i].set_ylim(ch1-0.5,ch2+0.5)
+            ax[j,i].set_title('Ant '+str(antidx+1)+' pol '+str(pidx))
+            ax[j,i].set_xlabel('Accumulation')
+            if i == 0:
+                ax[j,i].set_ylabel('Channel')
+            else:
+                ax[j,i].get_yaxis().set_ticks([])
+    f.colorbar(mesh, ax=ax.ravel().tolist())
+    return f, ax
+
 def capture(filename='dump',nsec=1,ptype='P',snaplen=5000,overwrite=True):
     ''' All-in-one command to capture a given number of seconds of packets on
         both interfaces and return the result in a single array.  

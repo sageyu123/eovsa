@@ -53,14 +53,22 @@ if __name__ == '__main__':
     files = files+files1  # Concatenate the two lists
     files.sort()
     print len(files),'files found'
-    spec = ef.eovsa_combinefits(files, freqgaps=True, outpath=fitsoutpath, ac_corr=True, savfig=True)
+    if len(files) == 0:
+        print 'pipeline_allday_fits: No TP files found; skipping TP combine.'
+        sys.stdout.flush()
+    else:
+        spec = ef.eovsa_combinefits(files, freqgaps=True, outpath=fitsoutpath, ac_corr=True, savfig=True)
     print outpath,year,month,day,'Finding files:',outpath+year+'/'+month+'/'+day+'/*_XP_*.fts'
     files = glob.glob(outpath+year+'/'+month+'/'+day+'/*_XP_*.fts')
     files1 = glob.glob(outpath+year1+'/'+month1+'/'+day1+'/*_XP_*.fts')  # Returns empty list if no such folder
     files = files+files1  # Concatenate the two lists
     files.sort()
     print len(files),'files found'
-    spec = ef.eovsa_combinefits(files, freqgaps=True, outpath=fitsoutpath, ac_corr=True, savfig=True)
+    if len(files) == 0:
+        print 'pipeline_allday_fits: No XP files found; skipping XP combine.'
+        sys.stdout.flush()
+    else:
+        spec = ef.eovsa_combinefits(files, freqgaps=True, outpath=fitsoutpath, ac_corr=True, savfig=True)
     if clearcache:
         os.chdir('..')
         os.system('rm -rf '+datstr)

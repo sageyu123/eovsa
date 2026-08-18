@@ -35,6 +35,8 @@
 #   2025-May-22  DG
 #     Slight change to some metadata for new azel antennas (14 and 15)
 #
+import os
+import shutil
 import struct,sys
 from sun_pos import *
 from math import pi
@@ -44,6 +46,25 @@ import chan_info_52 as ci
 from eovsa_array import *
 from eovsa_lst import *
 from ftplib import FTP
+
+RUNTIME_CACHE_DIR = '/common/python/runtime-cache'
+
+
+def _mirror_runtime_cache(path):
+    '''Mirror generated scanheader support files into the shared runtime cache.'''
+    try:
+        if not os.path.isfile(path):
+            return
+        if not os.path.isdir(RUNTIME_CACHE_DIR):
+            os.makedirs(RUNTIME_CACHE_DIR)
+        basename = os.path.basename(path)
+        target = os.path.join(RUNTIME_CACHE_DIR, basename)
+        shutil.copyfile(path, target)
+        if basename == 'scan_header.xml':
+            # Provide the no-underscore alias used by the Python 3 historian path.
+            shutil.copyfile(path, os.path.join(RUNTIME_CACHE_DIR, 'scanheader.xml'))
+    except:
+        pass
 
 def scan_header(sh_dict,datfile='/common/Tables/scanheader/scan_header.dat'):
     '''Writes the state frame header file from the scan header dictionary 
@@ -903,6 +924,7 @@ def scan_header(sh_dict,datfile='/common/Tables/scanheader/scan_header.dat'):
     f.close()
     xml.write('</Cluster>\n')
     xml.close()
+    _mirror_runtime_cache(xmlfile)
 
     # Connect to ACC /parm directory and transfer scan_header files
     try:
@@ -939,4 +961,3 @@ def scan_header(sh_dict,datfile='/common/Tables/scanheader/scan_header.dat'):
             sys.stdout.write('Could not transfer scan_header files.  ACC is down?\n')
 
     return fmt, datfile, xmlfile
-

@@ -102,6 +102,7 @@ class AGC_Thread (threading.Thread):
         self.threadID = threadID                               #set thread ID
         self.name = "roach" + str(threadID)                    #set the thread name
         self.sd = np.empty((4,50),float)                       #set up the standard deviation array
+        self.sd[:] = np.nan
         self.levels = np.zeros((4), int)
         self.agc = np.zeros((2), int)
         self.stop = False
@@ -330,6 +331,7 @@ def adc_monitor(nloop=None, ant_str= 'Ant1-15', verbose=False):
         # Loop over threads and get sd (4,50) for each
         stdall = np.zeros((8,4,50),float)
         needs = np.zeros((8,4), float)
+        valid_needs = np.zeros((8,4), bool)
         agc = np.zeros((8,2), int)
         levs = np.zeros((8,4), int)
         for i in range(8):
@@ -339,7 +341,12 @@ def adc_monitor(nloop=None, ant_str= 'Ant1-15', verbose=False):
             stdall[i] = stdev
             for chan in range(4):
                 # Use highest half of points to calculate FEM level needed to achieve target
-                needs[i,chan] = np.log10(np.median(np.sort(stdev[chan])[24:]/34.))*5.
+                chan_std = np.median(np.sort(stdev[chan])[24:])
+                if not np.isfinite(chan_std) or chan_std <= 0 or chan_std > 128:
+                    sys.stdout.write(t[11:19]+' Skipping FEMATTN ROACH{} CH{}: invalid ADC std {}\n'.format(i+1,chan,chan_std))
+                    continue
+                needs[i,chan] = np.log10(chan_std/34.)*5.
+                valid_needs[i,chan] = True
         agc.shape = (16,)
         # Save stdevs for this time
 #        fh = open(fname,'ab')
@@ -375,22 +382,25 @@ def adc_monitor(nloop=None, ant_str= 'Ant1-15', verbose=False):
                 needs = np.round(needs).astype(int)
                 for i in range(8):
                     if levs[i,0] == -1:
-                        # This ROACH has all failed attempts to read from stateframe, 
+                        # This ROACH has all failed attempts to read from stateframe,
                         # so use previous levels and skip any update
                         newlevs[i] = savlevs[i]
                     else:
-                        newlevs[i] = np.clip(levs[i]+needs[i],0,None)
+                        newlevs[i] = np.clip(levs[i] + needs[i], 0,15)
                 if np.sum(levs[:6]) == 0:
                     # All of the levels are zero and we are on NormalObserving, so probably
-                    # this is the start of a new scan. Hence, restore maximum of needs and 
+                    # this is the start of a new scan. Hence, restore maximum of needs and
                     # savlevs from previous time if available
-                    newlevs = np.maximum(needs,copy(savlevs))
+                    newlevs = np.clip(np.maximum(needs,copy(savlevs)),0,15)
                 savlevs = copy(newlevs)
                 for i in ants:
                     if agc[i] == 0:
                         # AGC is not active over the entire 30 s period, so adjust FEMATTN level toward target
                         nroach = i/2
                         nchan = (i % 2)*2
+                        if not (valid_needs[nroach,nchan] and valid_needs[nroach,nchan+1]):
+                            sys.stdout.write(t[11:19]+' Skipping FEMATTN ANT{}: invalid ADC std\n'.format(i+1))
+                            continue
                         if needs[nroach,nchan] !=0 or needs[nroach,nchan+1] !=0:
                             # If either channel needs adjustment, send the command
                             femcmd = 'FEMATTN {} {} ANT{}'.format(newlevs[nroach,nchan],newlevs[nroach,nchan+1],i+1)

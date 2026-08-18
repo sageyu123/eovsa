@@ -9,6 +9,22 @@ import copy
 import struct
 import urllib2
 import socket
+import os
+import shutil
+
+RUNTIME_CACHE_DIR = '/common/python/runtime-cache'
+
+
+def _mirror_runtime_cache(filename):
+    '''Mirror a refreshed runtime support file into the shared /common cache.'''
+    try:
+        if not os.path.isfile(filename):
+            return
+        if not os.path.isdir(RUNTIME_CACHE_DIR):
+            os.makedirs(RUNTIME_CACHE_DIR)
+        shutil.copyfile(filename, os.path.join(RUNTIME_CACHE_DIR, os.path.basename(filename)))
+    except:
+        pass
 
 def handle_cluster(child):
     '''This element of the XML tree is the head of a Cluster.  Step through
@@ -152,6 +168,7 @@ def xml_read(filename=None):
             for line in lines:
                 o.write(line+'\n')
             o.close()
+            _mirror_runtime_cache('stateframe.xml')
             f.close()
             f = urllib2.urlopen('ftp://'+userpass+'acc.solar.pvt/ni-rt/startup/stateframe.xml')
     else: 

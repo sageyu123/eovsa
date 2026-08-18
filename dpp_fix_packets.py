@@ -88,6 +88,26 @@ def update_cpu_file(cpu):
         f.write(str(c)+'\n')
         
     f.close()
+
+def roach_hint(cpu):
+    '''Return a conservative hint about which ROACH group may need capture-based
+    follow-up.
+
+    The softnet monitor only knows that packet processing slowed on the current
+    CPU pair. It does not directly identify a single ROACH board. The closest
+    board-level mapping available from the packet capture tools is:
+
+    - eth2 -> ROACH boards 1, 2, 5, 6
+    - eth3 -> ROACH boards 3, 4, 7, 8
+
+    This is only a hint for the operator. Exact board ID isolation still needs a
+    packet capture.
+    '''
+
+    return ('current CPU pair ' + str(cpu) +
+            '; softnet counters do not identify one board directly; '
+            'capture eth2 to inspect ROACH boards 1,2,5,6 or eth3 to inspect '
+            'ROACH boards 3,4,7,8')
     
 #Continuously checks /proc/net/softnet_stat once each second,
 #and calculates the number of packets/s on each interface.
@@ -140,7 +160,8 @@ while 1:
                 if (100000 < if1 < 130000) or (100000 < if2 < 130000):
                     # ==== This section can be removed once testing is complete ====
                     print Time.now().iso,'Packet loss detected!', np.round(if1), np.round(if2), 'Resetting interfaces'
-                    update_log('Packet loss detected! ' + str(np.round(if1)) + " " + str(np.round(if2)) + ' Resetting interfaces')
+                    update_log('Packet loss detected! ' + str(np.round(if1)) + " " + str(np.round(if2)) +
+                               ' Resetting interfaces; ' + roach_hint(c))
                     # ==============================================================
                     command = ['sudo','/usr/sbin/netplan','apply']
                     proc = subprocess.Popen(command)

@@ -277,11 +277,17 @@ def attncal_from_solpnt_to_sql(out, do_plot=False):
     #import pdb; pdb.set_trace()
     # Indexes into SQL records where a transition occurred.
     transitions, = np.where(dtot[good] - np.roll(dtot[good],1) != 0)
+    if len(transitions) == 0:
+        return None
     # Eliminate any zero-index transition (if it exists)
     if transitions[0] == 0:
         transitions = transitions[1:]
+    if len(transitions) < 2:
+        return None
     # These now have to be translated into indexes into the data, using the times
     idx = nearest_val_idx(d15['Timestamp'][good,0][transitions],Time(out['time'],format='jd').lv)
+    if len(idx) < 2:
+        return None
     #import pdb; pdb.set_trace()
     vx = np.nanmedian(out['p'][:nsolant,:,:,np.arange(idx[0]+1,idx[1]-1)],3)
     va = np.mean(out['a'][:nsolant,:2,:,np.arange(idx[0]+1,idx[1]-1)],3)

@@ -971,7 +971,7 @@ class App():
         self.status.config(text = 'Status: Analyzing Refcal -- please wait.')
         self.status.update()
         i = self.scan_selected
-        file = self.scan_dict['filelist'][i]
+        file = self.scan_dict.get('scanfilelist', self.scan_dict['filelist'])[i]
         refcal = rd_refcal(file)
         if self.fixdrift.get():
             refcal = fix_time_drift(refcal)
@@ -1099,7 +1099,7 @@ class App():
         self.status.config(text = 'Status: Analyzing Phasecal -- please wait.')
         self.status.update()
         i = self.scan_selected
-        file = self.scan_dict['filelist'][i]
+        file = self.scan_dict.get('scanfilelist', self.scan_dict['filelist'])[i]
         phacal = rd_refcal(file)
         if self.fixdrift.get():
             phacal = fix_time_drift(phacal)
@@ -1222,26 +1222,74 @@ def findscans(trange):
             # No previous day, so just skip it.
             pass
     ufdb_times = ufdb['ST_TS'].astype(float).astype(int)
+    ufdb_end_times = ufdb['EN_TS'].astype(float)
     idx = nearest_val_idx(tsint,ufdb_times)
-    fpath = '/data1/eovsa/fits/UDB/' + trange[0].iso[:4] + '/'
+    scanid = ufdb.get('SCANID')
+    if scanid is not None:
+        scanid = np.array([str(i).replace('\x00','').strip() for i in scanid])
+    default_year = trange[0].iso[:4]
     dur = []
     file = []
+    scanfiles = []
     for i in idx:
-        dur.append(((ufdb['EN_TS'].astype(float) - ufdb['ST_TS'].astype(float))[i])/60.)
-        file.append(fpath+ufdb['FILE'][i])
+        if scanid is not None and scanid[i] != '':
+            gidx = np.where(scanid == scanid[i])[0]
+            gidx = gidx[np.argsort(ufdb_times[gidx])]
+        else:
+            gidx = np.array([i])
+        dur.append((ufdb_end_times[gidx[-1]] - ufdb_times[gidx[0]])/60.)
+        files = []
+        for j in gidx:
+            fname = str(ufdb['FILE'][j]).replace('\x00','').strip()
+            year = default_year
+            if fname[:3] == 'UDB' and len(fname) >= 7:
+                year = fname[3:7]
+            files.append('/data1/eovsa/fits/UDB/' + year + '/' + fname)
+        file.append(files[0])
+        scanfiles.append(files)
     # Fix source ID to remove nulls
     srclist = np.array([str(i.replace('\x00','')) for i in projdict['SourceID']])
-    return {'Timestamp': tsint, 'SourceID': srclist, 'duration': np.array(dur), 'filelist':np.array(file), 'msg': msg}
+    scanfilearr = np.empty(len(scanfiles), dtype=object)
+    scanfilearr[:] = scanfiles
+    return {'Timestamp': tsint, 'SourceID': srclist, 'duration': np.array(dur), 'filelist':np.array(file), 'scanfilelist':scanfilearr, 'msg': msg}
     
+def _apply_scan_quack(out, quackint):
+    '''Remove the initial quack interval from an already-concatenated scan.'''
+    if quackint <= 0. or len(out['time']) < 2:
+        return out
+    dt = np.nanmedian(np.diff(out['time']))*86400.
+    nt = np.rint(quackint/dt).astype('int')
+    if nt <= 0 or nt >= len(out['time']):
+        return out
+    for key in ['a', 'x', 'p2', 'm']:
+        if key in out.keys():
+            out[key] = out[key][:,:,:,nt:]
+    if 'uvw' in out.keys():
+        out['uvw'] = out['uvw'][:,nt:]
+    out['time'] = out['time'][nt:]
+    out['ha'] = out['ha'][nt:]
+    return out
+
 def rd_refcal(file, quackint=120., navg=3):
-    ''' Reads a single UDB file representing a calibrator scan, and averages over the
-        bands in the file
+    ''' Reads one or more UDB files representing a calibrator scan, and averages over the
+        bands in the file(s)
     '''
     from read_idb import read_idb, bl2ord
     from copy import deepcopy
     import dbutil as db
-    
-    out = read_idb([file], navg=navg, quackint=quackint)
+
+    try:
+        string_types = (basestring,)
+    except NameError:
+        string_types = (str,)
+    if isinstance(file, string_types):
+        files = [file]
+    else:
+        files = list(file)
+    # read_idb() applies quackint separately to every file.  For split UFDB
+    # scans, only the beginning of the scan should be quacked.
+    out = read_idb(files, navg=navg, quackint=0.)
+    out = _apply_scan_quack(out, quackint)
 
     bds = np.unique(out['band'])
     nt = len(out['time'])

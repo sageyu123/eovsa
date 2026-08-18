@@ -413,6 +413,9 @@
 #     - Added timeout to urlopen to avoid hanging if the site is unreachable.
 #     - Added unified helper (get_cached_text) for cached fetch with remote refresh fallback.
 #     - Updated all CelesTrak URLs from .com to .org.
+#    2026-Jul-20 SY
+#       Added state-aware Ant 13 FEM power control, nightly default-schedule
+#       power events, and a five-minute morning communication check.
 
 
 import os, signal
@@ -425,6 +428,7 @@ from ftplib import FTP
 import urllib2
 import util
 import threading, pwr_cycle
+import eovsa_alerts
 import subprocess
 import roach
 from eovsa_tracktable import *
@@ -448,6 +452,36 @@ import cal_header
 import adc_cal2
 import pcapture2
 from whenup import make_sched, remove_cal
+
+
+ANT13_FEM_ALERT_RECIPIENT = 'sijie.yu@njit.edu'
+ANT13_FEM_WARMUP_SECONDS = 300
+ANT13_SUBARRAY_STATE_MAX_AGE = 10
+ANT13_FEM_BUILTIN_COMMANDS = {
+    'FEMPOWERON': ['$POWER FEM ON ANT13'],
+    'FEMPOWEROFF': ['$SCAN-STOP', '$WAIT 2', '$POWER FEM OFF ANT13']}
+
+
+def _read_macro_commands(cmds):
+    '''Return atomic command lines for one macro invocation.'''
+    macro_name = cmds[0].upper()
+    if macro_name in ANT13_FEM_BUILTIN_COMMANDS:
+        return list(ANT13_FEM_BUILTIN_COMMANDS[macro_name])
+    ctlfile = open(cmds[0].rstrip()+'.ctl')
+    try:
+        return ctlfile.readlines()
+    finally:
+        ctlfile.close()
+
+
+def _schedule_reference_line(lines):
+    '''Return the first non-power line used to identify a schedule date.'''
+    for line in lines:
+        tokens = line[20:].split()
+        command = tokens[0].upper() if tokens else ''
+        if command not in ANT13_FEM_BUILTIN_COMMANDS:
+            return line
+    return lines[0]
 
 
 class SimpleToolTip(object):
@@ -1054,6 +1088,9 @@ class App():
         self.PAthread = None
         self.wlimit = 17  # Default wind limit (mph) for 27-m antenna
         self.stale = True # Default status of weather station information (will be immediately set to False if not stale)
+        self.ant13_fem_ready_deadline = None
+        self.ant13_in_subarray2 = None
+        self.ant13_subarray_state_time = None
         
         # *************** New code due to loss of SQL ***************
         # Log both stateframe and scanheader data to files instead of SQL
@@ -1420,11 +1457,9 @@ class App():
             if len(sel) == 1:
                 line = w.get(sel[0])
                 cmds = line[20:].split()
-                f2 = open(cmds[0].rstrip()+'.ctl')
                 w.atomlist.delete(0,END)
-                for ctlline in f2.readlines():
+                for ctlline in _read_macro_commands(cmds):
                     w.atomlist.insert(END,ctlline.rstrip('\n'))
-                f2.close()
 
     #============================
     def Clear(self):
@@ -1448,6 +1483,10 @@ class App():
         if self.Toggle == 0:
             # Schedule is running, so do nothing
             return
+        self.ant13_fem_ready_deadline = None
+        self.waitmode = False
+        self.nextctlline = 0
+        self.wait = 0
         self.status.configure(state = NORMAL)
         if filename is None:
             init_dir = os.getcwd()
@@ -1514,11 +1553,18 @@ class App():
         if self.Toggle == 0:
             # Schedule is running, so do nothing
             return
+        self.ant13_fem_ready_deadline = None
+        self.waitmode = False
+        self.nextctlline = 0
+        self.wait = 0
         self.status.configure( state = NORMAL)
         t = util.Time.now()
-        scd = make_sched(t=t)
+        enable_ant13_fem_power = self.subarray_name == 'Subarray1'
+        scd = make_sched(t=t,
+                         ant13_fem_power=enable_ant13_fem_power)
         if self.no27m.get() == 1:
-            scd = remove_cal(scd)
+            scd = remove_cal(
+                scd, ant13_fem_power=enable_ant13_fem_power)
         self.L.delete(0, END)
         for line in scd:
             self.L.insert(END,line)
@@ -1793,6 +1839,10 @@ class App():
         now = mjd()
         if self.Toggle  == 0:    #Stop was pressed
             self.Toggle = 1
+            self.ant13_fem_ready_deadline = None
+            self.waitmode = False
+            self.nextctlline = 0
+            self.wait = 0
             self.B2.configure(text = 'Go')
             self.B2.configure(background = 'GREEN')
             self.downbutton.configure(state = NORMAL)
@@ -1856,9 +1906,8 @@ class App():
             # line and fill in the L2 Listbox
             line = self.L.get(self.curline)
             cmds = line[20:].split()
-            f2 = open(cmds[0].rstrip()+'.ctl')
             self.L2.delete(0,END)
-            lines = f2.readlines()
+            lines = _read_macro_commands(cmds)
             for ctlline in lines:
                 # Check for hash mark (#) in line other than first character
                 # (hash mark in first character means a comment)
@@ -1868,8 +1917,6 @@ class App():
                     i = int(ctlline[ihash+1:ihash+2])
                     ctlline = ctlline[:ihash]+cmds[i]+ctlline[ihash+2:]
                 self.L2.insert(END,ctlline.rstrip('\n'))
-            f2.close()
-
             self.L.see(min(self.curline+5,END))
             self.status.see(min(self.curline+5,END))            
             self.downbutton.configure(state = DISABLED)
@@ -2026,6 +2073,91 @@ class App():
             
         sys.stdout.flush()
                 
+    #============================
+    def _email_ant13_fem_alert(self, subject, body):
+        success, detail = eovsa_alerts.send_email(
+            ANT13_FEM_ALERT_RECIPIENT, subject, body)
+        if success:
+            print(util.Time.now().iso[:19], 'Ant 13 FEM alert:', detail)
+        else:
+            print(util.Time.now().iso[:19],
+                  'ALERT EMAIL NOT SENT to', ANT13_FEM_ALERT_RECIPIENT + ':',
+                  detail)
+        sys.stdout.flush()
+
+    #============================
+    def _report_ant13_fem_startup_failure(self, reason):
+        message = 'Ant 13 FEM startup verification failed: ' + reason
+        print(util.Time.now().iso[:19], message)
+        self.error = 'Err: Ant 13 FEM communication not ready'
+        body = (message + '\n\n'
+                'The standard solar schedule commanded FEM power ON five '
+                'minutes before its first observation or calibration. Check '
+                'vik13 Frontend relay 2 and Ant 13 FEM telemetry before '
+                'relying on Ant 13.')
+        thread = threading.Thread(
+            target=self._email_ant13_fem_alert,
+            args=('EOVSA Ant 13 FEM startup failure', body))
+        thread.daemon = True
+        thread.start()
+
+    #============================
+    def _check_ant13_fem_readiness(self, data, msg):
+        '''Perform the one-shot FEM communication check at the warm-up deadline.'''
+        deadline = self.ant13_fem_ready_deadline
+        if deadline is None or time.time() < deadline:
+            return
+        # Clear before reporting so a failed alert cannot trigger repeated mail.
+        self.ant13_fem_ready_deadline = None
+        if msg != 'No Error' or data is None:
+            self._report_ant13_fem_startup_failure(
+                'ACC stateframe unavailable (%s)' % msg)
+            return
+        try:
+            fem = self.accini['sf']['Antenna'][12]['Frontend']['FEM']
+            comm_err = stateframe.extract(data, fem['CommErr'])
+            comm_err_value = int(comm_err)
+        except Exception as err:
+            self._report_ant13_fem_startup_failure(
+                'cannot read CommErr from the stateframe (%s)' % err)
+            return
+        if comm_err_value == 0:
+            print(util.Time.now().iso[:19],
+                  'Ant 13 FEM startup verified: CommErr == 0')
+            sys.stdout.flush()
+        else:
+            self._report_ant13_fem_startup_failure(
+                'CommErr == %s after %d seconds' %
+                (comm_err, ANT13_FEM_WARMUP_SECONDS))
+
+    #============================
+    def _update_ant13_subarray_assignment(self, data, msg):
+        '''Cache whether Ant 13 is assigned to the secondary subarray.'''
+        if msg != 'No Error' or data is None:
+            return
+        try:
+            subarray2 = stateframe.extract(
+                data, self.accini['sf']['LODM']['Subarray2'])
+            self.ant13_in_subarray2 = bool(int(subarray2) & (1 << 12))
+            self.ant13_subarray_state_time = time.time()
+        except:
+            pass
+
+    #============================
+    def _ant13_fem_power_off_allowed(self):
+        '''Return whether recent subarray state permits automatic FEM shutdown.'''
+        updated = self.ant13_subarray_state_time
+        if (updated is None or
+                time.time() - updated > ANT13_SUBARRAY_STATE_MAX_AGE):
+            print(util.Time.now().iso[:19],
+                  'Skipping Ant 13 FEM power OFF: subarray assignment is stale')
+            return False
+        if self.ant13_in_subarray2:
+            print(util.Time.now().iso[:19],
+                  'Skipping Ant 13 FEM power OFF: Ant 13 is in Subarray2')
+            return False
+        return True
+
     #============================
     def inc_time(self):
         global sf_dict, sh_dict
@@ -2236,6 +2368,9 @@ class App():
             self.check_27m_sun(sf,data)
         else:
             self.error = msg
+
+        self._update_ant13_subarray_assignment(data, msg)
+        self._check_ant13_fem_readiness(data, msg)
                 
         # ************ This block commented out due to loss of SQL **************
         # If we are connected to the SQL database, send converted stateframe (only master schedule is connected)
@@ -2565,9 +2700,9 @@ class App():
     #============================
     def execute_cmds(self):
         '''Execute the atomic commands associated with the current line
-           of the schedule.  First read the commands from the associated
-           file and enter them into the L2 Listbox.  Then read them one
-           at a time from the Listbox and execute them.
+           of the schedule.  First obtain the commands from an associated
+           file or a built-in power event and enter them into the L2 Listbox.
+           Then read them one at a time from the Listbox and execute them.
         '''
         global sf_dict, sh_dict
         # Update the status file in /common/webplots for display on the status web page
@@ -2583,7 +2718,13 @@ class App():
         # line and fill in the L2 Listbox
         line = self.L.get(self.curline)
         cmds = line[20:].split()
-        f2 = open(cmds[0].rstrip()+'.ctl')
+        macro_name = cmds[0].upper()
+        macro_lines = _read_macro_commands(cmds)
+        if (macro_name in ANT13_FEM_BUILTIN_COMMANDS and
+                self.subarray_name != 'Subarray1'):
+            print('Ignoring', macro_name,
+                  'because Ant 13 FEM power is owned by Subarray1')
+            macro_lines = []
         self.L2.delete(0,END)
         # Current options for source ID
         if cmds[0].upper() == 'SUN': 
@@ -2668,7 +2809,7 @@ class App():
             except:
                 print(util.Time.now().iso, 'No fresh local copy, trying to fetch from Celestrak...')
                 try:
-                    f = urllib2.urlopen('http://www.celestrak.org/NORAD/elements/geo.txt', timeout=5)
+                    f = urllib2.urlopen('https://celestrak.org/NORAD/elements/gp.php?GROUP=geo&FORMAT=TLE', timeout=5)
                     lines = f.readlines()
                     fout = open(geofile, 'w')
                     for line in lines:
@@ -2716,7 +2857,14 @@ class App():
             sh_dict['track_mode'] = 'FIXED '        
         print(Time.now().iso[:22],'Project:',sh_dict['project'])
         print('Source:',sh_dict['source_id'])
-        lines = f2.readlines()
+        lines = macro_lines
+        if (macro_name == 'FEMPOWERON' and
+                self.subarray_name == 'Subarray1'):
+            self.ant13_fem_ready_deadline = (
+                time.time() + ANT13_FEM_WARMUP_SECONDS)
+            print(util.Time.now().iso[:19],
+                  'Ant 13 FEM warm-up started; communication check in',
+                  ANT13_FEM_WARMUP_SECONDS, 'seconds')
         for ctlline in lines:
             # Check for hash mark (#) in line other than first character
             # (hash mark in first character means a comment)
@@ -2726,7 +2874,6 @@ class App():
                 i = int(ctlline[ihash+1:ihash+2])
                 ctlline = ctlline[:ihash]+cmds[i]+ctlline[ihash+2:]
             self.L2.insert(END,ctlline.rstrip('\n'))
-        f2.close()
         # Now read the atomic commands one at a time, executing locally
         # those starting with $, and sending the others to the ACC.
         if self.waitmode:
@@ -2746,13 +2893,17 @@ class App():
 
     def sendctlline(self,ctlline):
         try:
+            if ctlline.upper().startswith('RX-SELECT'):
+                print(util.Time.now().iso[:23], 'Attempting ctl cmd', ctlline)
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.connect((self.accini['host'],self.accini['scdport']))
             s.send(ctlline)
             time.sleep(0.01)
             s.close()
-        except:
-            pass
+            return True
+        except Exception as e:
+            print(util.Time.now().iso[:23], 'Failed ctl cmd', ctlline, 'Error:', str(e))
+            return False
             
     def interpret_pcycle(self, ctlline):
         ''' Interprets the control line containing a $PCYCLE command, of the
@@ -2795,6 +2946,33 @@ class App():
                 except:
                     return None, None
         return device, ants
+
+    #============================
+    def interpret_power(self, ctlline):
+        '''Interpret ``$POWER FEM <ON|OFF> ANT13``.
+
+        :param ctlline: Atomic scheduler command line.
+        :type ctlline: str
+        :returns: Device name, requested Boolean power state, and antenna list;
+                  all three values are ``None`` when parsing fails.
+        :rtype: tuple(str or None, bool or None, list(int) or None)
+
+        This intentionally exposes only the Ant 13 frontend needed by the
+        nightly-RFI feature.  It does not provide generic antenna-controller
+        power control or assume that other relays use the same wiring.
+        '''
+        tokens = ctlline.upper().split()
+        if len(tokens) != 4 or tokens[0] != '$POWER':
+            return None, None, None
+        if tokens[1] not in ('FEM', 'FRONTEND') or tokens[3] != 'ANT13':
+            return None, None, None
+        if tokens[2] == 'ON':
+            power_on = True
+        elif tokens[2] == 'OFF':
+            power_on = False
+        else:
+            return None, None, None
+        return 'FRONTEND', power_on, [13]
         
     #============================
     def execute_ctlline(self,ctlline,mjd1=None,mjd2=None):
@@ -3318,6 +3496,10 @@ class App():
                         print('Error interpreting $PCYCLE command',ctlline)
                     else:
                         # Since device is not None, interpreting tokens succeeded.
+                        if (self.subarray_name != 'Subarray1' and
+                                device == 'FRONTEND' and 13 in ants):
+                            print('Ignoring Ant 13 FEM $PCYCLE outside Subarray1')
+                            ants = [antnum for antnum in ants if antnum != 13]
                         if device == 'ANT':
                             # Turn off all antennas that are to be power cycled
                             antstr = ''
@@ -3329,6 +3511,26 @@ class App():
                             t = threading.Thread(target=pwr_cycle.ant_toggle, args=(antnum, device))
                             t.daemon = True
                             t.start()
+                #==== POWER ====
+                elif ctlline.split()[0].upper() == '$POWER':
+                    # Set (rather than blindly toggle) Ant 13 FEM device power.
+                    if self.subarray_name != 'Subarray1':
+                        print('Ignoring $POWER command outside Subarray1',
+                              ctlline)
+                    else:
+                        device, power_on, ants = self.interpret_power(ctlline)
+                        if device is None:
+                            print('Error interpreting $POWER command',ctlline)
+                        else:
+                            for antnum in ants:
+                                if (not power_on and antnum == 13 and
+                                        not self._ant13_fem_power_off_allowed()):
+                                    continue
+                                t = threading.Thread(
+                                    target=pwr_cycle.ant_set_power,
+                                    args=(antnum, device, power_on))
+                                t.daemon = True
+                                t.start()
                 #==== KATADC_GET ====
                 elif ctlline.split()[0].upper() == '$KATADC_GET':
                     # Get the standard deviation for each KatADC (assumes frequency tuning is static)
@@ -3348,8 +3550,11 @@ class App():
                     # and increment by 1 day, then autogenerate a
                     # new schedule
                     self.toggle_state()  # Turn off schedule
-                    # Get time of first line in schedule and add a day
-                    mjd1 = mjd(self.L.get(0))
+                    # A five-minute FEM warm-up can cross midnight, so use
+                    # the first non-power line to identify the schedule date.
+                    schedule_lines = [self.L.get(i)
+                                      for i in range(self.lastline)]
+                    mjd1 = mjd(_schedule_reference_line(schedule_lines))
                     t = util.Time(mjd1+1,format='mjd')
                     self.Today(t)
                     self.Clear()

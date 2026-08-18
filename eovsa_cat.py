@@ -26,9 +26,9 @@
 #    Apparently celestrak.com is now celestrak.org.  The calling sequence for the
 #    files also changed, apparently (although the direct URL to text files also
 #    works in some cases).  Here are the URLs:
-#      GEO: https://celestrak.org/NORAD/elements/gp.php?GROUP=geo&FORMAT=tle
-#      GPS: https://celestrak.org/NORAD/elements/gp.php?GROUP=gps-ops&FORMAT=tle
-#      O3B: https://celestrak.org/NORAD/elements/gp.php?GROUP=other-comm&FORMAT=tle
+#      GEO: https://celestrak.org/NORAD/elements/gp.php?GROUP=geo&FORMAT=TLE
+#      GPS: https://celestrak.org/NORAD/elements/gp.php?GROUP=gps-ops&FORMAT=TLE
+#      O3B: https://celestrak.org/NORAD/elements/gp.php?GROUP=other-comm&FORMAT=TLE
 #  2025-Aug-05  DG
 #    TS Kelso limits the number of times one can access the above pages, so now
 #    I write the data to make a disk copy and if later the access fails it just reads
@@ -146,7 +146,7 @@ def load_geosats():
     # Retrieve TLE file for geostationary satellites from Celestrak site.
 
     # try:
-    #     f = urllib2.urlopen('https://celestrak.org/NORAD/elements/gp.php?GROUP=geo&FORMAT=tle', timeout=10)
+    #     f = urllib2.urlopen('https://celestrak.org/NORAD/elements/gp.php?GROUP=geo&FORMAT=TLE', timeout=10)
     #     lines = f.readlines()
     #     fout = open('geo.txt','w')
     #     for line in lines:
@@ -159,7 +159,7 @@ def load_geosats():
     #     lines = f.readlines()
     # f.close()
     lines = get_cached_text(
-        url='https://celestrak.org/NORAD/elements/gp.php?GROUP=geo&FORMAT=tle',
+        url='https://celestrak.org/NORAD/elements/gp.php?GROUP=geo&FORMAT=TLE',
         cache_path='geo.txt',
         max_age_hours=24.0,
         timeout=10,
@@ -190,7 +190,7 @@ def load_gpssats():
     '''
     # Retrieve TLE file for geostationary satellites from Celestrak site.
     # try:
-    #     f = urllib2.urlopen('https://celestrak.org/NORAD/elements/gp.php?GROUP=gps-ops&FORMAT=tle', timeout=10)
+    #     f = urllib2.urlopen('https://celestrak.org/NORAD/elements/gp.php?GROUP=gps-ops&FORMAT=TLE', timeout=10)
     #     lines = f.readlines()
     #     fout = open('gps.txt','w')
     #     for line in lines:
@@ -205,7 +205,7 @@ def load_gpssats():
     # f.close()
 
     lines = get_cached_text(
-        url='https://celestrak.org/NORAD/elements/gp.php?GROUP=gps-ops&FORMAT=tle',
+        url='https://celestrak.org/NORAD/elements/gp.php?GROUP=gps-ops&FORMAT=TLE',
         cache_path='gps.txt',
         max_age_hours=24.0,
         timeout=10,
@@ -235,7 +235,7 @@ def load_o3bsats():
     '''
     # Retrieve TLE file for ob3 satellites from Celestrak site.
     # try:
-    #     f = urllib2.urlopen('https://celestrak.org/NORAD/elements/gp.php?GROUP=other-comm&FORMAT=tle', timeout=10)
+    #     f = urllib2.urlopen('https://celestrak.org/NORAD/elements/gp.php?GROUP=other-comm&FORMAT=TLE', timeout=10)
     #     lines = f.readlines()
     #     fout = open('ob3.txt','w')
     #     for line in lines:
@@ -249,7 +249,7 @@ def load_o3bsats():
     # f.close()
 
     lines = get_cached_text(
-        url='https://celestrak.org/NORAD/elements/gp.php?GROUP=other-comm&FORMAT=tle',
+        url='https://celestrak.org/NORAD/elements/gp.php?GROUP=other-comm&FORMAT=TLE',
         cache_path='ob3.txt',
         max_age_hours=24.0,
         timeout=10,
