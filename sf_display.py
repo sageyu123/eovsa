@@ -1493,10 +1493,10 @@ class App():
                 h_volt = stf.extract(data,fe['HPol']['Voltage'])
                 v_volt = stf.extract(data,fe['VPol']['Voltage'])
 
-                # Replace power only for antenna index 14 (Ant 15), otherwise pass through.
-                if i == 14:
-                    hpv_val, h_replaced = replace_power_if_needed(hpv, h_attn1, h_attn2, 'H', nd_val, 1.105, env='lab', measured_voltage=h_volt)
-                    vpv_val, v_replaced = replace_power_if_needed(vpv, v_attn1, v_attn2, 'V', nd_val, 1.105, env='lab', measured_voltage=v_volt)
+                # Apply a calibrated model to Ant 14 or Ant 15 when available.
+                if i in (13, 14):
+                    hpv_val, h_replaced = replace_power_if_needed(hpv, h_attn1, h_attn2, 'H', nd_val, env='lab', measured_voltage=h_volt, antenna=i+1)
+                    vpv_val, v_replaced = replace_power_if_needed(vpv, v_attn1, v_attn2, 'V', nd_val, env='lab', measured_voltage=v_volt, antenna=i+1)
                 else:
                     hpv_val, h_replaced = hpv, False
                     vpv_val, v_replaced = vpv, False

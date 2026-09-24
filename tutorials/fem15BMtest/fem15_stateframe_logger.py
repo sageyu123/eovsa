@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Read-only Ant15 FEM stateframe logger for the mounted field test."""
+"""Read-only FEM stateframe logger for an Ant14 or Ant15 field test."""
 
 from __future__ import print_function
 
@@ -11,15 +11,15 @@ import stateframe as stf
 from util import Time
 
 
-ANTENNA_INDEX = 14
+DEFAULT_ANTENNA = 15
 
 
-def read_ant15(accini):
+def read_antenna(accini, antenna):
     data, message = stf.get_stateframe(accini)
     if message != "No Error":
         raise RuntimeError(message)
 
-    fem = accini["sf"]["Antenna"][ANTENNA_INDEX]["Frontend"]["FEM"]
+    fem = accini["sf"]["Antenna"][antenna - 1]["Frontend"]["FEM"]
 
     def pol_values(pol):
         node = fem[pol + "Pol"]
@@ -33,15 +33,23 @@ def read_ant15(accini):
     return stf.extract(data, fem["ND"]), pol_values("H"), pol_values("V")
 
 
+def read_ant15(accini):
+    """Preserve the original Ant15 helper for existing callers."""
+    return read_antenna(accini, DEFAULT_ANTENNA)
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Log Ant15 FEM ND, attenuation, voltage, and power without commands."
+        description="Log FEM ND, attenuation, voltage, and power without commands."
     )
+    parser.add_argument("--ant", type=int, default=DEFAULT_ANTENNA)
     parser.add_argument("--duration", type=float, default=420.0)
     parser.add_argument("--interval", type=float, default=1.0)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
+    if args.ant < 1 or args.ant > 16:
+        parser.error("ant must be in the range 1 to 16")
     if args.duration <= 0 or args.interval <= 0:
         parser.error("duration and interval must be positive")
 
@@ -60,7 +68,7 @@ def main():
             while time.time() < deadline:
                 started = time.time()
                 try:
-                    nd_state, h_values, v_values = read_ant15(accini)
+                    nd_state, h_values, v_values = read_antenna(accini, args.ant)
                     values = (Time.now().iso, nd_state) + h_values + v_values
                     output.write(
                         "%s,%s,%s,%s,%.8g,%.8g,%s,%s,%.8g,%.8g\n" % values
@@ -76,7 +84,10 @@ def main():
         except KeyboardInterrupt:
             print("Logger interrupted by operator.", file=sys.stderr)
 
-    print("Wrote %d rows to %s" % (rows, args.output), file=sys.stderr)
+    print(
+        "Wrote %d Ant%d rows to %s" % (rows, args.ant, args.output),
+        file=sys.stderr,
+    )
 
 
 if __name__ == "__main__":
