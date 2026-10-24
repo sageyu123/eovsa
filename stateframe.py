@@ -102,6 +102,11 @@
 #      Another tweak to PA_adjust() to add any offset prior to checking PA > 90 or <-90.  Also,
 #      PA_adjust() now responds to an 'Exit' command, which kills the thread but does not send
 #      the position angle to 0 first.
+#   2026-Oct-24
+#      Magnum Energy web site now returns 403 to the Python-urllib User-Agent, so
+#      rd_solpwr() sends a browser User-Agent.  Page layout also changed: the
+#      temperature cells now carry attributes (<td id=... >), so BatteryTemp is
+#      parsed like the other temperatures, and the scan stops after the FET row.
 #
 
 import struct, sys
@@ -228,6 +233,9 @@ def get_median_wind(wthr):
     cursor.close()
     return wthr
 
+# Magnum Energy's site returns 403 to the Python-urllib User-Agent (since 2026-09/10)
+SOLPWR_HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36'}
+
 #============================
 def rd_solpwr(url='http://data.magnumenergy.com/MW5127'):
     '''Reads the data from the solar power station at Ant 12 or 13, which is sent
@@ -238,7 +246,7 @@ def rd_solpwr(url='http://data.magnumenergy.com/MW5127'):
     '''
     # Read and decode the information from the power station at 12
     try:
-        f = urllib2.urlopen(url,timeout=0.4)
+        f = urllib2.urlopen(urllib2.Request(url, headers=SOLPWR_HEADERS),timeout=0.4)
     except:
         # Timeout error
         print(Time.now().iso,'Solar Power connection timed out')
@@ -255,7 +263,9 @@ def rd_solpwr(url='http://data.magnumenergy.com/MW5127'):
         return solpwr
 
     for i,line in enumerate(lines):
-        if i > 185:
+        # Stop before the later tables, which repeat the temperature labels
+        # (and the 'volts / amps' row after the FET row would not parse)
+        if i > 190:
             break
         if line.find('Data Date:<') > 0:
             t = Time(lines[i+2][23:23+19])
@@ -270,7 +280,7 @@ def rd_solpwr(url='http://data.magnumenergy.com/MW5127'):
         elif line.find('Amp Hours') > 0:
             solpwr.update({'AmpHours':int(lines[i+2].split(' ')[0])})
         elif line.find('Battery Temperature') > 0:
-            btemp = lines[i][lines[i].find('<td>')+4:lines[i].find('&deg;C')]
+            btemp = lines[i].split('&deg;C')[0].split('>')[-1]
             try:
                 solpwr.update({'BatteryTemp':int(btemp)})
             except:
@@ -287,6 +297,7 @@ def rd_solpwr(url='http://data.magnumenergy.com/MW5127'):
                 solpwr.update({'FETTemp':int(lines[i].split('&deg;C')[0][-2:])})
             except:
                 solpwr.update({'FETTemp':int(lines[i].split('&deg;C')[0][-1:])})
+            break  # FET Temperature is the last field needed from the 'Now' table
 
     return solpwr
 
