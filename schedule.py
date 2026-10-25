@@ -421,6 +421,10 @@
 #       as solar scans, so scan headers keep project NormalObserving, source
 #       Sun and track mode PLANET, and so midday-phasecal detection still
 #       sees them as SUN lines.
+#   2026-Oct-25  SJY
+#       Moved the once-per-minute solar power reads from seconds 0/1 to 20/21.
+#       The Magnum Energy site is slow for the first few seconds of each minute,
+#       which made the Ant 13 (MW5241) read time out.
 
 
 import os, signal, re
@@ -3119,10 +3123,11 @@ class App():
             pass
 
         # Once per minute, update the information from the Solar Power station(s)
-        if t.datetime.second == 0:
-            # Updates first solar power station on the minute
+        if t.datetime.second == 20:
+            # Updates first solar power station at second 20, because the Magnum site
+            # is slow in the first seconds of each minute
             self.solpwr[0] = stateframe.rd_solpwr('http://data.magnumenergy.com/MW5127')
-        if t.datetime.second == 1:
+        if t.datetime.second == 21:
             # Updates second solar power station one second later
             self.solpwr[1] = stateframe.rd_solpwr('http://data.magnumenergy.com/MW5241')
         sf_dict.update({'SolPwr':self.solpwr})
