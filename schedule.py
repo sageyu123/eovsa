@@ -425,6 +425,10 @@
 #       Moved the once-per-minute solar power reads from seconds 0/1 to 20/21.
 #       The Magnum Energy site is slow for the first few seconds of each minute,
 #       which made the Ant 13 (MW5241) read time out.
+#   2026-Oct-25  SJY
+#       Moved the solar power reads out of inc_time() into a background thread,
+#       solpwr_loop(), with a 5 s timeout, so the one-second loop never waits on
+#       the Magnum Energy site.  The reads still start at second 20 of each minute.
 
 
 import os, signal, re
@@ -1193,6 +1197,11 @@ class App():
         self.nextctlline = 0
         self.wait = 0
         self.solpwr = [{},{}]  # Empty solar power dictionary pair
+        # Read the solar power stations in a background thread (solpwr_loop), so the
+        # one-second loop in inc_time() never waits on the Magnum Energy site
+        self.solpwr_thread = threading.Thread(target=self.solpwr_loop)
+        self.solpwr_thread.daemon = True
+        self.solpwr_thread.start()
         self.sensors = [{},{},{},{},{},{},{},{}]  # Empty ROACH sensor dictionaries
         self.delays = [{},{},{},{},{},{},{},{}]  # Empty ROACH delays dictionaries
         self.w = {} # Empty weather dictionary
@@ -3007,6 +3016,25 @@ class App():
         return False
 
     #============================
+    def solpwr_loop(self):
+        ''' Background thread: once per minute, at second 20, read the solar power
+            stations at Ant 12 (MW5127) and Ant 13 (MW5241) from the Magnum Energy
+            site into self.solpwr.  A read can take seconds, so it is kept out of
+            inc_time(), and the timeout can be 5 s instead of 0.8 s.
+        '''
+        urls = ['http://data.magnumenergy.com/MW5127','http://data.magnumenergy.com/MW5241']
+        while True:
+            try:
+                # Sleep until second 20 of the next minute (the site is slow in the
+                # first seconds of each minute)
+                time.sleep(60 - ((time.time() - 20) % 60))
+                for i,url in enumerate(urls):
+                    self.solpwr[i] = stateframe.rd_solpwr(url,timeout=5)
+            except:
+                # Never let an error end the thread
+                print(util.Time.now().iso,'Solar Power thread error:',sys.exc_info()[1])
+                time.sleep(1)
+
     def inc_time(self):
         global sf_dict, sh_dict
 
@@ -3122,15 +3150,9 @@ class App():
             # The above calculation of tdif failed--probably a glitch in reading the weather, so leave state as is
             pass
 
-        # Once per minute, update the information from the Solar Power station(s)
-        if t.datetime.second == 20:
-            # Updates first solar power station at second 20, because the Magnum site
-            # is slow in the first seconds of each minute
-            self.solpwr[0] = stateframe.rd_solpwr('http://data.magnumenergy.com/MW5127')
-        if t.datetime.second == 21:
-            # Updates second solar power station one second later
-            self.solpwr[1] = stateframe.rd_solpwr('http://data.magnumenergy.com/MW5241')
-        sf_dict.update({'SolPwr':self.solpwr})
+        # The solar power stations are read once per minute by the background thread
+        # solpwr_loop(), which updates self.solpwr
+        sf_dict.update({'SolPwr':list(self.solpwr)})
 
         # Read ROACH sensor data, but only one each minute, staggered over different times
         # since for all 8 ROACHes this can take more than 0.5 s

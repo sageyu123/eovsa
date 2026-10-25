@@ -110,6 +110,9 @@
 #   2026-Oct-25
 #      Raised the rd_solpwr() urlopen timeout from 0.4 to 0.8 s.  The fetch (http
 #      redirect to https) takes 0.3-0.45 s from helios, so 0.4 s missed reads.
+#   2026-Oct-25  SJY
+#      Added the timeout argument to rd_solpwr() (default 0.8 s) for schedule.py's
+#      background solar power thread.
 #
 
 import struct, sys
@@ -240,16 +243,17 @@ def get_median_wind(wthr):
 SOLPWR_HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36'}
 
 #============================
-def rd_solpwr(url='http://data.magnumenergy.com/MW5127'):
+def rd_solpwr(url='http://data.magnumenergy.com/MW5127',timeout=0.8):
     '''Reads the data from the solar power station at Ant 12 or 13, which is sent
        to the Magnum Energy web site and they then serve it to us at the
        address: Ant12: http://data.magnumenergy.com/MW5127.
                 Ant13: http://data.magnumenergy.com/MW5241.
        Now returns a single dictionary, for whichever station is pointed to by url
+       timeout is the urlopen timeout in s (schedule.py's background thread uses 5 s)
     '''
     # Read and decode the information from the power station at 12
     try:
-        f = urllib2.urlopen(urllib2.Request(url, headers=SOLPWR_HEADERS),timeout=0.8)
+        f = urllib2.urlopen(urllib2.Request(url, headers=SOLPWR_HEADERS),timeout=timeout)
     except:
         # Timeout error
         print(Time.now().iso,'Solar Power connection timed out')
