@@ -107,6 +107,9 @@
 #      rd_solpwr() sends a browser User-Agent.  Page layout also changed: the
 #      temperature cells now carry attributes (<td id=... >), so BatteryTemp is
 #      parsed like the other temperatures, and the scan stops after the FET row.
+#   2026-Oct-25
+#      Raised the rd_solpwr() urlopen timeout from 0.4 to 0.8 s.  The fetch (http
+#      redirect to https) takes 0.3-0.45 s from helios, so 0.4 s missed reads.
 #
 
 import struct, sys
@@ -246,7 +249,7 @@ def rd_solpwr(url='http://data.magnumenergy.com/MW5127'):
     '''
     # Read and decode the information from the power station at 12
     try:
-        f = urllib2.urlopen(urllib2.Request(url, headers=SOLPWR_HEADERS),timeout=0.4)
+        f = urllib2.urlopen(urllib2.Request(url, headers=SOLPWR_HEADERS),timeout=0.8)
     except:
         # Timeout error
         print(Time.now().iso,'Solar Power connection timed out')
